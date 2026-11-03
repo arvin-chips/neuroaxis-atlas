@@ -6,7 +6,7 @@ import {
 } from './content'
 import { SliceView, type HoverInfo, type MeasureLine, type OverlayState } from './SliceView'
 import {
-  clampVoxel, labelValueByKey, loadCase, loadIndex, nearestLevel,
+  clampVoxel, EMBEDDED, labelValueByKey, loadCase, loadIndex, nearestLevel, planeGeom, sliceOf,
   type CaseIndexEntry, type CaseMeta, type Landmark, type LevelAnchor, type Volume, type Voxel,
 } from './volume'
 import { makeQuestion, type Question, type QuizKind } from './quiz'
@@ -237,9 +237,11 @@ export default function CtApp() {
         <select className="ct-case" value={caseId ?? ''} onChange={(e) => setCaseId(e.target.value)} aria-label="Case">
           {index.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
         </select>
-        <nav className="ct-header-links">
-          <a href={ATLAS_URL}>3D atlas ↗</a>
-        </nav>
+        {!EMBEDDED && (
+          <nav className="ct-header-links">
+            <a href={ATLAS_URL}>3D atlas ↗</a>
+          </nav>
+        )}
       </header>
 
       {error && <div className="ct-error">Could not load: {error}</div>}
@@ -259,7 +261,9 @@ export default function CtApp() {
                 )
               })}
             </div>
-            <div className="ct-wl">L {win.level} · W {win.width} <span className="ct-hint">right-drag or shift-drag to adjust</span></div>
+            <label className="ct-range">Level <input type="range" min={-200} max={1000} step={1} value={win.level} onChange={(e) => setWin((w) => ({ ...w, level: Number(e.target.value) }))} /> <span className="ct-num">{win.level}</span></label>
+            <label className="ct-range">Width <input type="range" min={1} max={3000} step={1} value={win.width} onChange={(e) => setWin((w) => ({ ...w, width: Number(e.target.value) }))} /> <span className="ct-num">{win.width}</span></label>
+            <p className="ct-hint">Touch: swipe up/down on the image to scroll slices, tap to place the crosshair and name what is under it. Mouse: wheel scrolls, right-drag adjusts the window.</p>
             {!calibrated && <p className="ct-warn">This case only holds −20…100 HU. Bone, subdural and soft-tissue windows need a calibrated case built from DICOM.</p>}
           </section>
 
@@ -320,6 +324,12 @@ export default function CtApp() {
             )}
           </section>
 
+          {EMBEDDED ? (
+            <section className="ct-offline">
+              <h3>Offline</h3>
+              <p className="ct-hint">This file contains everything (scan, labels, teaching text). It works with no internet — keep it in the Files app.</p>
+            </section>
+          ) : (
           <section className="ct-offline">
             <h3>Offline</h3>
             <button className="ct-chip" disabled={!v || !!offline.progress}
@@ -336,6 +346,7 @@ export default function CtApp() {
             </button>
             <p className="ct-hint">{offline.cached ? `${offline.cached} files cached in this browser.` : 'Nothing cached yet.'}</p>
           </section>
+          )}
         </aside>
 
         <main className="ct-main">
@@ -345,6 +356,7 @@ export default function CtApp() {
               <div className="ct-main-view">
                 <SliceView key={`main-${mainPlane}`} {...viewProps(mainPlane)} active />
                 {hoverText && <div className="ct-readout">{hoverText}</div>}
+                <SliceBar vol={v} plane={mainPlane} cursor={cursor} onCursor={setCursor} />
                 {here && hereInfo && !(quizActive && question?.kind === 'level' && !answer) && (
                   <div className="ct-here">≈ {hereInfo.name}{Math.abs(here.dz) > 2 ? ` (${here.dz > 0 ? '+' : ''}${(here.dz * v.sz).toFixed(0)} mm)` : ''}</div>
                 )}
@@ -455,7 +467,7 @@ function StructurePanel(p: { id: string | null; vol: Volume | null; onIsolate: (
                 <summary>{r.name}</summary>
                 <p>{r.function}</p>
                 {r.bloodSupply && <p><strong>Blood supply:</strong> {r.bloodSupply}</p>}
-                <a href={`${ATLAS_URL}?select=${encodeURIComponent(id)}`}>Open in 3D atlas ↗</a>
+                {!EMBEDDED && <a href={`${ATLAS_URL}?select=${encodeURIComponent(id)}`}>Open in 3D atlas ↗</a>}
               </details>
             )
           })}
@@ -581,6 +593,30 @@ function DataPanel(p: {
         {p.edited && <button className="ct-chip" onClick={p.reset}>Discard local edits</button>}
       </div>
       <pre className="ct-json">{json}</pre>
+    </div>
+  )
+}
+
+function SliceBar(p: { vol: Volume; plane: Plane; cursor: Voxel; onCursor: (c: Voxel) => void }) {
+  const g = planeGeom(p.vol, p.plane)
+  const axis = p.plane === 'axial' ? 2 : p.plane === 'coronal' ? 1 : 0
+  const cur = sliceOf(p.plane, p.cursor)
+  // slider runs inferior→superior (axial), posterior→anterior (coronal), right→left (sagittal)
+  const toSlider = (sl: number) => (p.plane === 'coronal' ? g.count - 1 - sl : sl)
+  const set = (val: number) => {
+    const c: Voxel = [...p.cursor]
+    c[axis] = p.plane === 'coronal' ? g.count - 1 - val : val
+    p.onCursor(clampVoxel(p.vol, c))
+  }
+  const step = (d: number) => set(Math.max(0, Math.min(g.count - 1, toSlider(cur) + d)))
+  const [lo, hi] = p.plane === 'axial' ? ['Inf', 'Sup'] : p.plane === 'coronal' ? ['Post', 'Ant'] : ['R', 'L']
+  return (
+    <div className="ct-slicebar" onPointerDown={(e) => e.stopPropagation()}>
+      <button className="ct-step" onClick={() => step(-1)} aria-label="Previous slice">▼</button>
+      <span className="ct-hint">{lo}</span>
+      <input type="range" min={0} max={g.count - 1} step={1} value={toSlider(cur)} onChange={(e) => set(Number(e.target.value))} aria-label="Slice" />
+      <span className="ct-hint">{hi}</span>
+      <button className="ct-step" onClick={() => step(1)} aria-label="Next slice">▲</button>
     </div>
   )
 }

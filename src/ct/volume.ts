@@ -40,11 +40,38 @@ export interface Volume {
 
 export const CASES_BASE = `${import.meta.env.BASE_URL}ct-cases/`
 
+/**
+ * Single-file offline build (npm run build:ct-offline): the case index, every
+ * case.json and every binary (base64) are embedded in the HTML as
+ * window.__CT_EMBED__, so the page needs no server and no network.
+ */
+interface Embed {
+  index: CaseIndexEntry[]
+  cases: Record<string, { meta: CaseMeta; files: Record<string, string> }>
+}
+const EMBED = (globalThis as unknown as { __CT_EMBED__?: Embed }).__CT_EMBED__
+export const EMBEDDED = !!EMBED
+
+function b64ToBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out.buffer
+}
+
 async function fetchBinary(url: string, compression?: string): Promise<ArrayBuffer> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
-  if (compression !== 'gzip') return res.arrayBuffer()
-  const raw = await res.arrayBuffer()
+  let raw: ArrayBuffer
+  if (EMBED) {
+    const m = url.slice(CASES_BASE.length).split('/')
+    const b64 = EMBED.cases[m[0]]?.files[m[1]]
+    if (!b64) throw new Error(`not embedded: ${url}`)
+    raw = b64ToBuffer(b64)
+  } else {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`)
+    raw = await res.arrayBuffer()
+  }
+  if (compression !== 'gzip') return raw
   const bytes = new Uint8Array(raw)
   // A server may already have stripped the gzip layer (Content-Encoding); detect the magic bytes.
   if (!(bytes[0] === 0x1f && bytes[1] === 0x8b)) return raw
@@ -53,6 +80,7 @@ async function fetchBinary(url: string, compression?: string): Promise<ArrayBuff
 }
 
 export async function loadIndex(): Promise<CaseIndexEntry[]> {
+  if (EMBED) return EMBED.index
   const res = await fetch(`${CASES_BASE}index.json`)
   if (!res.ok) throw new Error(`case index: HTTP ${res.status}`)
   return (await res.json()).cases as CaseIndexEntry[]
@@ -65,9 +93,15 @@ export function caseFiles(meta: CaseMeta): string[] {
 
 export async function loadCase(id: string): Promise<Volume> {
   const base = `${CASES_BASE}${id}/`
-  const res = await fetch(`${base}case.json`)
-  if (!res.ok) throw new Error(`case ${id}: HTTP ${res.status}`)
-  const meta = (await res.json()) as CaseMeta
+  let meta: CaseMeta
+  if (EMBED) {
+    if (!EMBED.cases[id]) throw new Error(`case ${id} not embedded`)
+    meta = EMBED.cases[id].meta
+  } else {
+    const res = await fetch(`${base}case.json`)
+    if (!res.ok) throw new Error(`case ${id}: HTTP ${res.status}`)
+    meta = (await res.json()) as CaseMeta
+  }
   const [nx, ny, nz] = meta.dims
   const [sx, sy, sz] = meta.spacing
   const huBuf = await fetchBinary(base + meta.volume.file, meta.volume.compression)

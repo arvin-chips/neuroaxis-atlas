@@ -7,12 +7,12 @@
  * (scan volumes are several MB each). For a fully local install without a
  * browser cache, `npm run build` and serve dist/ — see docs/CT_ANATOMY.md.
  */
-import { caseFiles, CASES_BASE, type CaseMeta } from './volume'
+import { caseFiles, CASES_BASE, EMBEDDED, type CaseMeta } from './volume'
 
 export const CACHE = 'ct-anatomy-v1'
 
 export function registerServiceWorker(): void {
-  if (!('serviceWorker' in navigator) || import.meta.env.DEV) return
+  if (!('serviceWorker' in navigator) || import.meta.env.DEV || EMBEDDED || location.protocol === 'file:') return
   navigator.serviceWorker.register(`${import.meta.env.BASE_URL}ct-sw.js`, { scope: import.meta.env.BASE_URL })
     .catch((e) => console.warn('[ct-anatomy] service worker not registered:', e))
 }

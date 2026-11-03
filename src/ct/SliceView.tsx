@@ -63,7 +63,7 @@ export function SliceView(p: Props) {
   const geom = useMemo(() => planeGeom(vol, plane), [vol, plane])
   const slice = sliceOf(plane, cursor)
   const data = useMemo(() => extractSlice(vol, plane, slice), [vol, plane, slice])
-  const drag = useRef<{ mode: 'cursor' | 'window' | 'measure'; x: number; y: number; win: { level: number; width: number } } | null>(null)
+  const drag = useRef<{ mode: 'cursor' | 'window' | 'measure' | 'touch'; x: number; y: number; win: { level: number; width: number }; slice0?: number; moved?: boolean } | null>(null)
 
   useEffect(() => {
     const el = wrapRef.current
@@ -340,6 +340,12 @@ export function SliceView(p: Props) {
       p.onMeasure?.({ plane, slice, a: cr, b: cr })
       return
     }
+    if (e.pointerType === 'touch' && !p.compact) {
+      // iPad / phone: one-finger vertical swipe scrolls slices, a tap places
+      // the crosshair and identifies what is under the finger.
+      drag.current = { mode: 'touch', x: e.clientX, y: e.clientY, win, slice0: slice, moved: false }
+      return
+    }
     drag.current = { mode: 'cursor', x: e.clientX, y: e.clientY, win }
     const h = info(cr)
     p.onCursor(h.voxel)
@@ -355,6 +361,16 @@ export function SliceView(p: Props) {
       const width = Math.max(1, d.win.width + (e.clientX - d.x) * 2)
       const level = d.win.level - (e.clientY - d.y) * 1
       p.onWindow({ level: Math.round(level), width: Math.round(width) })
+    } else if (d.mode === 'touch') {
+      const dy = e.clientY - d.y
+      if (Math.abs(dy) > 8 || Math.abs(e.clientX - d.x) > 8) d.moved = true
+      if (d.moved) {
+        const c: Voxel = [...cursor]
+        const axis = plane === 'axial' ? 2 : plane === 'coronal' ? 1 : 0
+        const n = Math.round(-dy / 6)
+        c[axis] = (d.slice0 ?? 0) + (plane === 'coronal' ? -n : n)
+        p.onCursor(clampVoxel(vol, c))
+      }
     } else if (d.mode === 'measure' && cr) {
       p.onMeasure?.({ plane, slice, a: [d.x, d.y], b: cr })
     } else if (d.mode === 'cursor' && cr) {
@@ -362,7 +378,18 @@ export function SliceView(p: Props) {
     }
   }
 
-  const onPointerUp = () => { drag.current = null }
+  const onPointerUp = (e: React.PointerEvent) => {
+    const d = drag.current
+    drag.current = null
+    if (d?.mode === 'touch' && !d.moved) {
+      const cr = eventToColRow(e)
+      if (!cr) return
+      const h = info(cr)
+      p.onCursor(h.voxel)
+      p.onHover?.(h)
+      p.onPick?.(h)
+    }
+  }
 
   const onWheel = (e: React.WheelEvent) => {
     const step = (e.deltaY > 0 ? -1 : 1) * (e.shiftKey ? 5 : 1)
@@ -385,7 +412,7 @@ export function SliceView(p: Props) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => p.onHover?.(null)}
+        onPointerLeave={(e) => { if (e.pointerType !== 'touch') p.onHover?.(null) }}
         aria-label={`${plane} CT slice ${slice + 1} of ${geom.count}`}
         role="img"
       />

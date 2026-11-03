@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "NeuroAxis — 3D Brainstem Atlas: Diencephalon · Mesencephalon · Rhombencephalon",
+  "description": "NeuroAxis \u2014 3D Brainstem Atlas: Diencephalon \u00b7 Mesencephalon \u00b7 Rhombencephalon",
   "scripts": {
     "dev": "vite --port 5173",
     "build": "vite build",
@@ -37,7 +37,8 @@
     "verify:vasc-courses": "node scripts/verify/vasc-courses.mjs",
     "verify:vessel-render": "node scripts/verify/vessel-render.mjs",
     "verify:scientific": "node scripts/verify/scientific-review.mjs && node scripts/verify/review-runtime.mjs && node scripts/verify/residual-scientific.mjs",
-    "verify:public-imaging": "node scripts/verify/public-imaging.mjs"
+    "verify:public-imaging": "node scripts/verify/public-imaging.mjs",
+    "build:ct-offline": "vite build --config vite.ct-offline.config.ts && node scripts/ct-anatomy/embed-offline.mjs"
   },
   "dependencies": {
     "@react-three/drei": "9.114.3",
@@ -57,6 +58,7 @@
     "esbuild": "file:vendor/esbuild-shim",
     "terser": "^5.51.2",
     "typescript": "5.6.3",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vite-plugin-singlefile": "^2.0.3"
   }
 }
