@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'node:url'
 
 // Vite config — NeuroAxis 3D Brainstem Atlas.
 // JSON module imports (src/data/*.json) are enabled for both the dev server
@@ -89,9 +90,21 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 2400,
     rollupOptions: {
+      // Two pages: the 3D atlas (index.html) and the CT Anatomy module
+      // (ct-anatomy.html, src/ct/), which shares the atlas' structure records.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        ct: fileURLToPath(new URL('./ct-anatomy.html', import.meta.url)),
+      },
       output: {
         manualChunks(id: string): string | undefined {
+          // Structure records are shared by both pages; a dedicated chunk keeps
+          // the CT page from inheriting a chunk that also imports three.js.
+          if (id.includes('/src/data/structures/')) return 'atlas-structures'
           if (!id.includes('node_modules')) return undefined
+          // React is shared by both pages; without its own chunk Rollup folds it
+          // into vendor-three and the CT page would download three.js.
+          if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return 'vendor-react'
           if (
             id.includes('node_modules/three/') ||
             id.includes('node_modules/@react-three/') ||

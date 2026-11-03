@@ -1,0 +1,7 @@
+# CT Anatomy case builder (scripts/ct-anatomy/*.py)
+numpy
+scipy
+SimpleITK>=2.3
+# optional: automatic segmentation (brain_structures needs a free academic licence:
+#   totalseg_set_license -l <key>, see https://backend.totalsegmentator.com/license-academic/)
+# totalsegmentator>=2.4

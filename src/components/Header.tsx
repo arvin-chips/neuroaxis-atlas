@@ -489,6 +489,14 @@ export default function Header({ onOpenRights }: { onOpenRights: () => void }) {
         >
           References
         </button>
+        <a
+          className="btn"
+          href={`${import.meta.env.BASE_URL}ct-anatomy.html`}
+          style={{ textDecoration: 'none' }}
+          title="CT Anatomy: scroll real head CT from the foramen magnum to the vertex, in three planes, with windows, labels and a quiz"
+        >
+          CT Anatomy
+        </a>
       </div>
     </header>
   )

@@ -1,5 +1,16 @@
 # NeuroAxis — 3D Brainstem Atlas
 
+## CT Anatomy module — normal head CT
+
+`ct-anatomy.html` (header button **CT Anatomy**) teaches normal non-contrast head CT
+on real scans: scroll from the foramen magnum to the vertex, axial/coronal/sagittal
+views, brain/subdural/stroke/bone/soft-tissue windows, TotalSegmentator labels drawn
+and named on each slice, structure isolation, nine reference levels with recognition
+cues, clinical correlations (where haemorrhage, infarcts and mass effect appear), a quiz,
+a measure tool, and offline use. The bundled demo is the NLM Visible Human head CT
+(brain window only, unsegmented); build calibrated, segmented cases from real normal CT
+with `scripts/ct-anatomy/build_case.py`. See [docs/CT_ANATOMY.md](docs/CT_ANATOMY.md).
+
 ## Residual scientific review — 2026-10-05
 
 An additional audit against the supplied Blumenfeld second edition, with public

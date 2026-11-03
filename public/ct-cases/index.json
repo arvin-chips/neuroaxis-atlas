@@ -1,0 +1,11 @@
+{
+ "cases": [
+  {
+   "id": "vhp-head-demo",
+   "title": "Visible Human head CT (demo, brain window only)",
+   "summary": "Real CT of a cadaveric head from the NLM Visible Human Project, recovered from the NeuroAxis atlas grid into physical millimetres. Brain window only; no segmentation bundled.",
+   "hasLabels": false,
+   "huCalibrated": false
+  }
+ ]
+}
