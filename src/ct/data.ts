@@ -155,7 +155,16 @@ export class SeriesStore {
     if (!p) {
       const info = this.meta.chunks[c]
       p = fetch(`${DATA_BASE}${this.meta.study}/${this.meta.series}/${info.file}`)
-        .then((r) => { if (!r.ok) throw new Error(`${info.file}: HTTP ${r.status}`); return r.arrayBuffer() })
+        .then(async (r) => {
+          if (!r.ok) throw new Error(`${info.file}: HTTP ${r.status}`)
+          // Hosts that cannot serve binary files get the same bytes as base64 text (*.b64.txt).
+          if (info.file.endsWith('.b64.txt')) {
+            const t = await r.text(); const bin = atob(t.trim()); const u = new Uint8Array(bin.length)
+            for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i)
+            return u.buffer
+          }
+          return r.arrayBuffer()
+        })
         .then((b) => {
           if (b.byteLength !== info.bytes) throw new Error(`${info.file}: ${b.byteLength} bytes, expected ${info.bytes}`)
           this.stats.bytesFetched += b.byteLength
