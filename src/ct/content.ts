@@ -298,6 +298,37 @@ export const STRUCTURES: Record<string, StructureInfo> = {
 }
 STRUCTURES['choroid-glomus-l'] = { ...STRUCTURES['choroid-glomus-r'], key: 'choroid-glomus-l' }
 
+const L = (key: string, name: string, ct: string, find: string, clinical: string, levels: string[], atlas: string[] = []): StructureInfo =>
+  ({ key, name, ct, find, clinical, levels, atlas })
+
+Object.assign(STRUCTURES, {
+  dens: L('dens', 'Dens of C2 (odontoid peg)', 'Dense cortical bone peg articulating with the anterior arch of C1.', 'Lowest slices, centred in the ring of C1, directly behind the anterior arch.', 'Odontoid fractures are assessed on bone window with sagittal and coronal reformats; the atlanto-dental interval should be narrow.', ['craniocervical']),
+  'suprasellar-cistern': L('suprasellar-cistern', 'Suprasellar cistern', 'CSF-density star or pentagon in front of the midbrain.', 'Midbrain level, midline, above the sella; its limbs are the interhemispheric fissure, Sylvian fissures and ambient cisterns.', 'First place to look for subarachnoid blood; asymmetric effacement suggests uncal herniation.', ['midbrain']),
+  clivus: L('clivus', 'Clivus', 'Sloping midline bone from the dorsum sellae to the foramen magnum.', 'Midline skull base in front of the brainstem; best seen on sagittal bone reformats.', 'Basilar artery and brainstem lie directly behind it; clival fractures are high-energy injuries.', ['pons', 'medulla']),
+  'mastoid-r': L('mastoid-r', 'Mastoid air cells', 'Honeycomb of air cells in the mastoid part of the temporal bone.', 'Lateral posterior skull base at the pons/medulla level; bone window.', 'Opacified cells after trauma can indicate a temporal bone fracture; asymmetric pneumatisation is normal.', ['pons', 'medulla']),
+  'otic-capsule-r': L('otic-capsule-r', 'Otic capsule (inner ear)', 'Very dense bone enclosing the cochlea and semicircular canals.', 'Petrous temporal bone, medial to the middle ear, at the pons level; bone window.', 'Fractures crossing the otic capsule carry a high risk of sensorineural hearing loss and CSF leak.', ['pons']),
+  'internal-occipital-protuberance': L('internal-occipital-protuberance', 'Internal occipital protuberance', 'Midline bony prominence on the inner occipital bone.', 'Posterior midline of the posterior fossa; the confluence of the sinuses lies against it.', 'Landmark for the torcular (confluence of sinuses) and the attachment of the falx cerebelli.', ['pons', 'medulla']),
+  'dorsum-sellae': L('dorsum-sellae', 'Dorsum sellae', 'Plate of bone forming the back wall of the pituitary fossa, topped by the posterior clinoid processes.', 'Midline, at the top of the clivus, just below the suprasellar cistern; bone window.', 'Erosion of the dorsum sellae is a classic sign of longstanding raised intracranial pressure or a sellar mass.', ['midbrain']),
+  // Arteries on NON-CONTRAST CT (these scans have no contrast; vessels are seen only where CSF or calcium outlines them)
+  'vertebral-artery': L('vertebral-artery', 'Vertebral arteries', 'On non-contrast CT: soft-tissue tubes in front of the medulla, often with mural calcification in older patients.', 'Foramen magnum/medulla level, anterolateral to the medulla, converging toward the midline.', 'Vertebral dissection or occlusion causes posterior-circulation stroke (e.g. lateral medullary syndrome).', ['foramen-magnum', 'medulla'], ['vasc-vertebral-artery']),
+  'basilar-artery': L('basilar-artery', 'Basilar artery', 'A round soft-tissue dot in the prepontine cistern; a hyperdense basilar is a sign of thrombosis.', 'Pons level, in the CSF in front of the pons, behind the clivus.', 'Basilar occlusion is catastrophic and can be subtle — compare its density with other vessels.', ['pons'], ['vasc-basilar-artery']),
+  'internal-carotid-artery': L('internal-carotid-artery', 'Internal carotid arteries (cavernous/supraclinoid)', 'Curved soft-tissue/calcified tubes beside the sella; siphon calcification is very common.', 'Either side of the sella/dorsum sellae at the midbrain level, entering the suprasellar cistern.', 'Calcification marks atherosclerosis; a dense ICA terminus suggests thrombus.', ['midbrain'], ['vasc-internal-carotid-artery']),
+  'middle-cerebral-artery': L('middle-cerebral-artery', 'Middle cerebral artery (M1)', 'Horizontal soft-tissue line in the Sylvian fissure CSF; normally similar in density to other vessels.', 'From the suprasellar cistern laterally into the Sylvian fissure at the midbrain level.', 'The hyperdense MCA sign (and the MCA "dot" sign in the fissure) indicates thrombus in acute stroke.', ['midbrain', 'third-ventricle'], ['vasc-middle-cerebral-artery']),
+  'anterior-cerebral-artery': L('anterior-cerebral-artery', 'Anterior cerebral arteries', 'Small soft-tissue dots in the anterior interhemispheric fissure.', 'Midline anterior to the suprasellar cistern (A1/ACom) and along the interhemispheric fissure higher up.', 'ACA territory infarcts affect the medial frontal and parietal lobes.', ['midbrain', 'third-ventricle'], ['vasc-anterior-cerebral-artery']),
+  'posterior-cerebral-artery': L('posterior-cerebral-artery', 'Posterior cerebral arteries', 'Curvilinear soft-tissue lines in the ambient cisterns around the midbrain.', 'Midbrain level, curving round the cerebral peduncles.', 'PCA infarcts involve the occipital lobe, medial temporal lobe and thalamus.', ['midbrain'], ['vasc-posterior-cerebral-artery']),
+})
+STRUCTURES['mastoid-l'] = { ...STRUCTURES['mastoid-r'], key: 'mastoid-l' }
+STRUCTURES['otic-capsule-l'] = { ...STRUCTURES['otic-capsule-r'], key: 'otic-capsule-l' }
+
+/** Arteries to look for at each level on a non-contrast scan (CTA anatomy pending TopCoW). */
+export const LEVEL_ARTERIES: Record<string, string[]> = {
+  'foramen-magnum': ['vertebral-artery'],
+  medulla: ['vertebral-artery'],
+  pons: ['basilar-artery'],
+  midbrain: ['internal-carotid-artery', 'middle-cerebral-artery', 'anterior-cerebral-artery', 'posterior-cerebral-artery'],
+  'third-ventricle': ['middle-cerebral-artery', 'anterior-cerebral-artery'],
+}
+
 /* ------------------------------------------------------------ clinical */
 
 export interface ClinicalTopic {

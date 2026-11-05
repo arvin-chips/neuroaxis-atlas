@@ -2,14 +2,13 @@
 
 ## CT Anatomy module — normal head CT
 
-`ct-anatomy.html` (header button **CT Anatomy**) teaches normal non-contrast head CT
-on real scans: scroll from the foramen magnum to the vertex, axial/coronal/sagittal
-views, brain/subdural/stroke/bone/soft-tissue windows, TotalSegmentator labels drawn
-and named on each slice, structure isolation, nine reference levels with recognition
-cues, clinical correlations (where haemorrhage, infarcts and mass effect appear), a quiz,
-a measure tool, and offline use. The bundled demo is the NLM Visible Human head CT
-(brain window only, unsegmented); build calibrated, segmented cases from real normal CT
-with `scripts/ct-anatomy/build_case.py`. See [docs/CT_ANATOMY.md](docs/CT_ANATOMY.md).
+`ct-anatomy.html` (header button **CT Anatomy**) teaches normal non-contrast head CT on
+real clinical scans from the CQ500 dataset: Patient A (CQ500-CT-235, 5 mm and 0.625 mm
+soft-tissue reconstructions) and Patient B (CQ500-CT-298, 0.625 mm bone reconstruction),
+shown with their original DICOM pixel values, DICOM window/level, axial/coronal/sagittal
+views from the thin series, 100/200/400 % zoom without interpolation, touch navigation,
+reference levels, landmarks, clinical correlations and a quiz. The image data lives in a
+separate `ct-anatomy-data` repository. See [docs/CT_ANATOMY.md](docs/CT_ANATOMY.md).
 
 ## Residual scientific review — 2026-10-05
 

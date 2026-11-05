@@ -48,3 +48,8 @@ PLAN.md
 # v16 publication hygiene — swarm run scratch
 .dsh-swarm/_*
 PLAN-run-*.md
+
+# CT Anatomy image data lives in a separate data repository (ct-anatomy-data);
+# public/ct-data is a local symlink/copy for development and deployment only.
+public/ct-data
+dist-offline/
