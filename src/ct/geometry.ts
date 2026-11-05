@@ -67,17 +67,18 @@ export function toImage(g: Geo, plane: Plane, p: Patient): [number, number] {
 }
 
 /** Extract the stored values of one displayed image from the volume (coronal / sagittal). */
-export function reformat(vol: Int16Array, g: Geo, plane: 'coronal' | 'sagittal', index: number): Int16Array {
+export function reformat<T extends Int16Array | Uint8Array>(vol: T, g: Geo, plane: 'coronal' | 'sagittal', index: number): T {
   const n = g.cols * g.rows
+  const Ctor = vol.constructor as { new (len: number): T }
   if (plane === 'coronal') {
-    const out = new Int16Array(g.cols * g.count)
+    const out = new Ctor(g.cols * g.count)
     for (let v = 0; v < g.count; v++) {
       const k = g.count - 1 - v
-      out.set(vol.subarray(k * n + index * g.cols, k * n + (index + 1) * g.cols), v * g.cols)
+      out.set(vol.subarray(k * n + index * g.cols, k * n + (index + 1) * g.cols) as never, v * g.cols)
     }
     return out
   }
-  const out = new Int16Array(g.rows * g.count)
+  const out = new Ctor(g.rows * g.count)
   for (let v = 0; v < g.count; v++) {
     const base = (g.count - 1 - v) * n + index
     for (let r = 0; r < g.rows; r++) out[v * g.rows + r] = vol[base + r * g.cols]

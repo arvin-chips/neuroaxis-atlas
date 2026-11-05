@@ -6,7 +6,7 @@
  * (index, series.json, annotations, all chunks) in that cache, so after one
  * online visit the app works with no connection. Nothing is cached implicitly.
  */
-import { DATA_BASE, type DataIndex, type SeriesMeta } from './data'
+import { DATA_BASE, type DataIndex, type LabelMeta, type SeriesMeta } from './data'
 
 export const CACHE = 'ct-anatomy-v2' // keep in sync with public/ct-sw.js
 
@@ -25,20 +25,24 @@ function appFiles(): string[] {
   return [...urls]
 }
 
-export async function dataFiles(index: DataIndex, metas: SeriesMeta[]): Promise<{ url: string; bytes: number }[]> {
+export async function dataFiles(index: DataIndex, metas: SeriesMeta[], labels: LabelMeta[] = []): Promise<{ url: string; bytes: number }[]> {
   const out = [{ url: `${DATA_BASE}index.json`, bytes: 0 }]
   for (const e of index.exams) out.push({ url: `${DATA_BASE}${e.id}/annotations.json`, bytes: 0 })
   for (const m of metas) {
     out.push({ url: `${DATA_BASE}${m.study}/${m.series}/series.json`, bytes: 0 })
     for (const c of m.chunks) out.push({ url: `${DATA_BASE}${m.study}/${m.series}/${c.file}`, bytes: c.bytes })
   }
+  for (const l of labels) {
+    out.push({ url: `${DATA_BASE}${l.study}/${l.series}/labels/labels.json`, bytes: 0 })
+    for (const c of l.chunks) out.push({ url: `${DATA_BASE}${l.study}/${l.series}/${c.file}`, bytes: c.bytes })
+  }
   return out
 }
 
-export async function saveOffline(index: DataIndex, metas: SeriesMeta[], onProgress: (doneBytes: number, totalBytes: number, files: number) => void): Promise<number> {
+export async function saveOffline(index: DataIndex, metas: SeriesMeta[], labels: LabelMeta[], onProgress: (doneBytes: number, totalBytes: number, files: number) => void): Promise<number> {
   if (!('caches' in window)) throw new Error('This browser has no Cache Storage. Use https or localhost.')
   const cache = await caches.open(CACHE)
-  const files = [...appFiles().map((url) => ({ url, bytes: 0 })), ...(await dataFiles(index, metas))]
+  const files = [...appFiles().map((url) => ({ url, bytes: 0 })), ...(await dataFiles(index, metas, labels))]
   const total = files.reduce((s, f) => s + f.bytes, 0)
   let done = 0, n = 0
   for (const f of files) {
@@ -53,10 +57,10 @@ export async function saveOffline(index: DataIndex, metas: SeriesMeta[], onProgr
   return n
 }
 
-export async function offlineStatus(index: DataIndex | null, metas: SeriesMeta[]): Promise<{ cached: number; total: number }> {
+export async function offlineStatus(index: DataIndex | null, metas: SeriesMeta[], labels: LabelMeta[] = []): Promise<{ cached: number; total: number }> {
   if (!('caches' in window) || !index) return { cached: 0, total: 0 }
   const cache = await caches.open(CACHE)
-  const files = await dataFiles(index, metas)
+  const files = await dataFiles(index, metas, labels)
   let cached = 0
   for (const f of files) if (await cache.match(f.url)) cached++
   return { cached, total: files.length }

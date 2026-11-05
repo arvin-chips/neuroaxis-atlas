@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Landmark, LevelAnchor, SeriesStore } from './data'
+import type { LabelDef, LabelStore, Landmark, LevelAnchor, SeriesStore } from './data'
 import {
   huOf, makeLut, planeCount, planeDims, planeIndex, reformat, toImage, toPatient,
   type Geo, type Patient, type Plane,
@@ -8,7 +8,20 @@ import { LEVELS } from './content'
 
 export type Zoom = 'fit' | number // number = image pixels per CSS pixel along the column axis (1 = 100 %)
 
-export interface Hover { p: Patient; stored: number; hu: number | null; landmark: Landmark | null }
+export interface Hover { p: Patient; stored: number; hu: number | null; landmark: Landmark | null; label: LabelDef | null }
+
+/** How the segmentation layer is shown (it is drawn on its own canvas, never into the CT pixels). */
+export interface SegView {
+  show: boolean
+  opacity: number
+  outline: boolean
+  text: boolean
+  hidden: Set<number>
+  isolate: number | null
+  emphasis: Set<number>            // when non-empty, only these labels are coloured
+  quizOutline?: number | null      // quiz: outline only this label, no names
+  defs: Map<number, LabelDef>
+}
 export interface Measure { plane: Plane; index: number; a: [number, number]; b: [number, number] }
 
 interface Props {
@@ -38,7 +51,11 @@ interface Props {
   onPick?: (h: Hover) => void
   onActivate?: () => void
   version: number // bump to redraw when the store decodes new slices
+  labels?: LabelStore | null
+  seg?: SegView
 }
+
+const PAIRED = new Set(['caudate_nucleus', 'lentiform_nucleus', 'thalamus', 'internal_capsule', 'insular_cortex', 'cerebellum', 'frontal_lobe', 'parietal_lobe', 'temporal_lobe', 'occipital_lobe', 'sinus_maxillary', 'sinus_frontal'])
 
 const ORIENT: Record<Plane, [string, string, string, string]> = {
   axial: ['R', 'L', 'A', 'P'], coronal: ['R', 'L', 'S', 'I'], sagittal: ['A', 'P', 'S', 'I'],
@@ -50,6 +67,8 @@ export function Viewport(p: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLCanvasElement>(null)
   const ovRef = useRef<HTMLCanvasElement>(null)
+  const segRef = useRef<HTMLCanvasElement>(null)
+  const segOffRef = useRef<HTMLCanvasElement | null>(null)
   const offRef = useRef<HTMLCanvasElement | null>(null)
   const imgDataRef = useRef<ImageData | null>(null)
   const lastGood = useRef<{ key: string; data: Int16Array } | null>(null)
@@ -76,6 +95,7 @@ export function Viewport(p: Props) {
 
   // request decode for axial (progressive)
   useEffect(() => { if (plane === 'axial') store.request(index, p.compact ? 0 : 6) }, [store, plane, index, p.compact])
+  useEffect(() => { if (plane === 'axial' && p.labels && p.seg?.show !== false) p.labels.request(index, p.compact ? 0 : 4) }, [p.labels, plane, index, p.compact, p.seg?.show])
 
   // physical scale: CSS px per mm
   const physW = dims.w * dims.pxW, physH = dims.h * dims.pxH
@@ -99,6 +119,47 @@ export function Viewport(p: Props) {
   }, [store, plane, index, p.volumeReady, geo, p.version, meta])
 
   const lut = useMemo(() => makeLut(meta, p.center, p.width), [meta, p.center, p.width])
+
+  // label values for the displayed image (separate layer)
+  const labelPix = useMemo(() => {
+    const L = p.labels
+    if (!L) return null
+    if (plane === 'axial') return L.peek(index)
+    const vol = L.volumeData
+    return vol ? reformat(vol, geo, plane, index) : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.labels, plane, index, geo, p.version])
+
+  // one text anchor per label on this image: the member pixel nearest the label's centroid
+  const anchors = useMemo(() => {
+    const seg = p.seg, d = labelPix
+    if (!seg || !d || !seg.show || !seg.text || p.compact || seg.quizOutline != null) return []
+    const W = dims.w
+    // bilateral structures that the model labels without a side get one name per side
+    // (split at the structure's own centre column); not on sagittal images
+    const split = (v: number) => plane !== 'sagittal' && PAIRED.has(seg.defs.get(v)?.source ?? '')
+    const acc = new Map<number, [number, number, number]>()
+    for (let i = 0; i < d.length; i++) { const v = d[i]; if (!v) continue; const e = acc.get(v); const x = i % W, y = (i / W) | 0; if (e) { e[0]++; e[1] += x; e[2] += y } else acc.set(v, [1, x, y]) }
+    const minPx = 40 / (dims.pxW * dims.pxH)
+    const out: { v: number; u: number; w: number; n: number }[] = []
+    for (const [v, [nAll, sxAll]] of acc) {
+      if (nAll < minPx || seg.hidden.has(v)) continue
+      if (seg.isolate != null && v !== seg.isolate) continue
+      if (seg.emphasis.size && !seg.emphasis.has(v)) continue
+      const mid = sxAll / nAll
+      const parts: ((x: number) => boolean)[] = split(v) ? [(x) => x < mid, (x) => x >= mid] : [() => true]
+      for (const inPart of parts) {
+        let n = 0, sx = 0, sy = 0
+        for (let i = 0; i < d.length; i++) if (d[i] === v && inPart(i % W)) { n++; sx += i % W; sy += (i / W) | 0 }
+        if (n < minPx) continue
+        const cx = sx / n, cy = sy / n
+        let best = -1, bd = Infinity
+        for (let i = 0; i < d.length; i++) if (d[i] === v && inPart(i % W)) { const dd = (i % W - cx) ** 2 + (((i / W) | 0) - cy) ** 2; if (dd < bd) { bd = dd; best = i } }
+        out.push({ v, u: best % W, w: (best / W) | 0, n })
+      }
+    }
+    return out.sort((a, b) => b.n - a.n)
+  }, [labelPix, p.seg, p.compact, dims, plane])
 
   // draw image layer (original pixels → VOI LUT; no filtering)
   useEffect(() => {
@@ -137,6 +198,45 @@ export function Viewport(p: Props) {
     // geometry of the drawn image, for automated pixel-fidelity tests
     Object.assign(cv.dataset, { offx: String(offX), offy: String(offY), pxw: String(dims.pxW * scale), pxh: String(dims.pxH * scale), w: String(dims.w), h: String(dims.h), dpr: String(dpr), smooth: String(ctx.imageSmoothingEnabled) })
   }, [pixels, lut, size, dims, scale, offX, offY, dw, dh])
+
+  // segmentation layer: its own canvas between the CT image and the overlay
+  useEffect(() => {
+    const cv = segRef.current
+    if (!cv) return
+    const dpr = window.devicePixelRatio || 1
+    cv.width = Math.round(size.w * dpr); cv.height = Math.round(size.h * dpr)
+    cv.style.width = `${size.w}px`; cv.style.height = `${size.h}px`
+    const ctx = cv.getContext('2d')!
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height)
+    const seg = p.seg, d = labelPix
+    if (!seg || !d || (!seg.show && seg.quizOutline == null)) return
+    if (!segOffRef.current) segOffRef.current = document.createElement('canvas')
+    const off = segOffRef.current
+    if (off.width !== dims.w || off.height !== dims.h) { off.width = dims.w; off.height = dims.h }
+    const octx = off.getContext('2d')!
+    const img = octx.createImageData(dims.w, dims.h), px = img.data, W = dims.w, H = dims.h
+    const rgb = new Map<number, [number, number, number]>()
+    for (const [id, def] of seg.defs) { const n = parseInt(def.color.slice(1), 16); rgb.set(id, [(n >> 16) & 255, (n >> 8) & 255, n & 255]) }
+    const shown = (v: number) => v !== 0 && (seg.quizOutline != null ? v === seg.quizOutline : seg.isolate != null ? v === seg.isolate : seg.emphasis.size ? seg.emphasis.has(v) : !seg.hidden.has(v))
+    const fillA = Math.round(seg.opacity * 255), edgeA = Math.round(Math.min(1, seg.opacity + 0.45) * 255)
+    const outlineOnly = seg.outline || seg.quizOutline != null
+    for (let i = 0; i < d.length; i++) {
+      const v = d[i], o = i << 2
+      if (shown(v)) {
+        const c = rgb.get(v); if (!c) continue
+        const x = i % W, y = (i / W) | 0
+        const edge = x === 0 || y === 0 || x === W - 1 || y === H - 1 || d[i - 1] !== v || d[i + 1] !== v || d[i - W] !== v || d[i + W] !== v
+        if (!edge && outlineOnly) continue
+        px[o] = c[0]; px[o + 1] = c[1]; px[o + 2] = c[2]; px[o + 3] = edge ? edgeA : fillA
+      } else if (seg.isolate != null && seg.quizOutline == null) {
+        px[o + 3] = 150 // dim everything outside the isolated structure (overlay only; CT pixels untouched)
+      }
+    }
+    octx.putImageData(img, 0, 0)
+    ctx.imageSmoothingEnabled = false
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.drawImage(off, offX, offY, dw, dh)
+  }, [labelPix, p.seg, size, dims, offX, offY, dw, dh])
 
   // overlay layer (never touches the image canvas)
   useEffect(() => {
@@ -181,11 +281,31 @@ export function Viewport(p: Props) {
       ctx.globalAlpha = 1
     }
 
+    // segmentation names on this image
+    const placed: [number, number, number, number][] = []
+    if (anchors.length && p.seg) {
+      ctx.font = font(11); ctx.textBaseline = 'middle'
+      for (const a of anchors) {
+        const def = p.seg.defs.get(a.v); if (!def) continue
+        const x = X(a.u), y = Y(a.w)
+        const t = def.name.replace(/ \((putamen|calvarium|atrium)[^)]*\)/, '').replace(' / cisterns', '')
+        const tw = ctx.measureText(t).width
+        let tx = x + 5, ty = y
+        const clash = (bx: number, by: number) => bx < 0 || bx + tw > size.w || placed.some((b) => bx < b[0] + b[2] + 3 && bx + tw + 3 > b[0] && by - 7 < b[1] + b[3] && by + 7 > b[1])
+        let k = 0
+        while (clash(tx, ty) && k < 8) { k++; ty = y + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 14; if (k === 4) tx = x - 5 - tw }
+        if (clash(tx, ty)) continue
+        placed.push([tx, ty - 7, tw, 14])
+        ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill()
+        halo(t, tx, ty, '#ffffff')
+      }
+    }
+
     // landmarks within ±1.5 mm of this plane
     if (p.showLandmarks && !p.compact) {
       const tol = 1.5
       ctx.font = font(12); ctx.textBaseline = 'middle'
-      const boxes: [number, number, number, number][] = [] // placed label boxes (x, y, w, h) to avoid overlap
+      const boxes: [number, number, number, number][] = [...placed] // also avoid structure names already drawn
       // markers are obstacles for every label except their own
       const markers: { id: string; x: number; y: number }[] = []
       const free = (x: number, y: number, w: number, own: string) =>
@@ -249,7 +369,7 @@ export function Viewport(p: Props) {
       halo(`W ${Math.round(p.width)} L ${Math.round(p.center)} · ${zoomPct}%`, 8, 26, 'rgba(255,255,255,0.7)')
       if (!pixels.exact) { ctx.textBaseline = 'bottom'; halo(needsVolume && !p.volumeReady ? 'Full volume not loaded' : 'Decoding slice…', 8, size.h - 8, '#fbbf24') }
     }
-  }, [size, plane, cursor, index, count, geo, dims, scale, offX, offY, dw, dh, p.levels, p.landmarks, p.showLandmarks, p.showLabels, p.showCrosshair, p.highlight, p.accent, p.compact, p.measure, p.center, p.width, zoomPct, pixels.exact, needsVolume, p.volumeReady])
+  }, [size, plane, cursor, index, count, geo, dims, scale, offX, offY, dw, dh, p.levels, p.landmarks, p.showLandmarks, p.showLabels, p.showCrosshair, p.highlight, p.accent, p.compact, p.measure, p.center, p.width, zoomPct, pixels.exact, needsVolume, p.volumeReady, anchors, p.seg])
 
   /* -------------------------------------------------------- interaction */
 
@@ -269,8 +389,10 @@ export function Viewport(p: Props) {
     const hu = Number.isNaN(stored) || stored === meta.pixelPaddingValue ? null : huOf(meta, stored)
     let landmark: Landmark | null = null
     for (const lm of p.landmarks) if (Math.hypot(lm.p[0] - pt[0], lm.p[1] - pt[1], lm.p[2] - pt[2]) < 6) landmark = lm
-    return { p: pt, stored, hu, landmark }
-  }, [geo, plane, index, pixels, dims, meta, p.landmarks])
+    const lv = labelPix ? labelPix[v * dims.w + u] : 0
+    const label = lv && p.seg ? p.seg.defs.get(lv) ?? null : null
+    return { p: pt, stored, hu, landmark, label }
+  }, [geo, plane, index, pixels, dims, meta, p.landmarks, labelPix, p.seg])
 
   const stepSlices = useCallback((n: number) => {
     const c: Patient = [...cursor]
@@ -382,6 +504,7 @@ export function Viewport(p: Props) {
   return (
     <div ref={wrapRef} className={`ctv${p.compact ? ' ctv-compact' : ''}`} onContextMenu={(e) => e.preventDefault()}>
       <canvas ref={imgRef} className="ctv-img" aria-hidden="true" />
+      <canvas ref={segRef} className="ctv-seg" aria-hidden="true" />
       <canvas
         ref={ovRef}
         className="ctv-ov"

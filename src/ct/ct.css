@@ -129,3 +129,15 @@ code { font-size: 13px; background: #0006; padding: 0 4px; border-radius: 4px; }
   .ct-brand span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .ct-side { transition: none; } }
+
+/* segmentation structure list */
+.ct-group { border: 1px solid var(--line); border-radius: 10px; padding: 4px 8px; background: var(--panel-2); }
+.ct-group summary { cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 14px; list-style: none; }
+.ct-group summary::-webkit-details-marker { display: none; }
+.ct-group summary input, .ct-structs input { width: 18px; height: 18px; accent-color: var(--exam); }
+.ct-structs { list-style: none; margin: 2px 0 4px; padding: 0; }
+.ct-structs li { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 13.5px; border-radius: 6px; }
+.ct-structs li.is-iso { background: color-mix(in srgb, var(--exam) 20%, transparent); }
+.ct-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.ct-link { flex: 1; text-align: left; border: 0; background: none; padding: 4px 0; cursor: pointer; font-size: 13.5px; }
+.ct-mini { min-width: 40px; min-height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; cursor: pointer; }

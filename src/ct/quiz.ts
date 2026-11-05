@@ -1,9 +1,9 @@
 /** CT Anatomy — quiz questions built from the exam's hand-placed levels and landmarks. */
 import { LEVELS, STRUCTURES } from './content'
-import type { Annotations } from './data'
+import type { Annotations, LabelMeta, SeriesMeta } from './data'
 import type { Patient } from './geometry'
 
-export type QuizKind = 'level' | 'find'
+export type QuizKind = 'level' | 'find' | 'name-structure' | 'find-structure'
 
 export interface Question {
   kind: QuizKind
@@ -12,6 +12,7 @@ export interface Question {
   options?: { id: string; label: string }[]
   answer: string
   explain: string
+  labelId?: number          // structure quizzes: the TotalSegmentator label asked about
 }
 
 const rnd = (n: number) => Math.floor(Math.random() * n)
@@ -48,4 +49,24 @@ export const baseId = (id: string) => id.replace(/-(r|l)$/, '')
 /** A tap within 8 mm of the landmark (either side for paired ones) counts. */
 export function checkFind(a: Annotations, answer: string, p: Patient): boolean {
   return a.landmarks.some((lm) => baseId(lm.id) === baseId(answer) && Math.hypot(lm.p[0] - p[0], lm.p[1] - p[1], lm.p[2] - p[2]) <= 8)
+}
+
+/** Structure quizzes from the segmentation: a well-represented label, shown on its median slice. */
+export function structureQuestion(kind: 'name-structure' | 'find-structure', lm: LabelMeta | null, metas: Map<string, SeriesMeta>): Question | null {
+  if (!lm || lm.labels.length < 4) return null
+  const sm = metas.get(`${lm.study}/${lm.series}`)
+  if (!sm) return null
+  const pool = lm.labels.filter((d) => d.volume_ml >= 0.3 && !['subarachnoid_space', 'skull', 'brain'].includes(d.source))
+  const d = pool[rnd(pool.length)]
+  const slices = lm.slices.filter((s) => s.present.includes(d.id)).map((s) => s.i)
+  if (!slices.length) return null
+  const k = slices[Math.floor(slices.length / 2) + rnd(Math.max(1, Math.floor(slices.length / 4))) - Math.floor(slices.length / 8)] ?? slices[slices.length >> 1]
+  const z = sm.slices[Math.max(0, Math.min(sm.count - 1, k))].imagePositionPatient[2]
+  const explain = STRUCTURES[d.teach ?? '']?.find ?? `${d.name} (${d.group}).`
+  if (kind === 'find-structure') return { kind, prompt: `Tap: ${d.name}`, z, answer: String(d.id), labelId: d.id, explain }
+  const sameGroup = shuffle(lm.labels.filter((x) => x.id !== d.id && x.group === d.group))
+  const others = shuffle(lm.labels.filter((x) => x.id !== d.id && x.group !== d.group))
+  const opts = shuffle([d, ...[...sameGroup, ...others].slice(0, 3)])
+  return { kind, prompt: 'Name the outlined structure.', z, answer: String(d.id), labelId: d.id, explain,
+    options: opts.map((o) => ({ id: String(o.id), label: o.name })) }
 }

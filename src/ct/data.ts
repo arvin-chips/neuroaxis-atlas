@@ -263,3 +263,113 @@ export class SeriesStore {
   }
   get volumeData() { return this.hasVolume ? this.volume : null }
 }
+
+/* ------------------------------------------------------- label layer */
+
+export interface LabelDef { id: number; task: string; source: string; name: string; group: string; color: string; teach: string | null; voxels: number; volume_ml: number }
+export interface LabelMeta {
+  study: string
+  series: string
+  rows: number
+  columns: number
+  count: number
+  labels: LabelDef[]
+  chunks: { file: string; bytes: number; sha256: string }[]
+  slices: { i: number; chunk: number; offset: number; length: number; present: number[]; sha256: string }[]
+  tool: string
+  tasks: string[]
+  note: string
+}
+
+/** Segmentation labels for a series, or null when none were produced. */
+export async function loadLabelMeta(study: string, series: string): Promise<LabelMeta | null> {
+  const r = await fetch(`${DATA_BASE}${study}/${series}/labels/labels.json`)
+  if (!r.ok) return null
+  return (await r.json()) as LabelMeta
+}
+
+async function fetchChunkBytes(url: string, file: string, expected: number): Promise<Uint8Array> {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`${file}: HTTP ${r.status}`)
+  let b: ArrayBuffer
+  if (file.endsWith('.b64.txt')) {
+    const bin = atob((await r.text()).trim()); const u = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i)
+    b = u.buffer
+  } else b = await r.arrayBuffer()
+  if (b.byteLength !== expected) throw new Error(`${file}: ${b.byteLength} bytes, expected ${expected}`)
+  return new Uint8Array(b)
+}
+
+/**
+ * Label slices (uint8, same grid as the CT series), decoded on demand. Stored and drawn
+ * separately from the CT pixels; never combined with them.
+ */
+export class LabelStore {
+  readonly meta: LabelMeta
+  readonly n: number
+  private chunks = new Map<number, Promise<Uint8Array>>()
+  private lru = new Map<number, Uint8Array>()
+  private pending = new Map<number, Promise<Uint8Array>>()
+  private volume: Uint8Array | null = null
+  private ready = new Set<number>()
+  private listeners = new Set<() => void>()
+  private disposed = false
+  constructor(meta: LabelMeta, private maxSlices = 48) { this.meta = meta; this.n = meta.rows * meta.columns }
+  onChange(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
+  private emit() { for (const f of this.listeners) f() }
+  dispose() { this.disposed = true; this.lru.clear(); this.chunks.clear(); this.pending.clear(); this.volume = null; this.ready.clear(); this.listeners.clear() }
+
+  private chunk(c: number) {
+    let p = this.chunks.get(c)
+    if (!p) {
+      const info = this.meta.chunks[c]
+      p = fetchChunkBytes(`${DATA_BASE}${this.meta.study}/${this.meta.series}/${info.file}`, info.file, info.bytes)
+      p.catch(() => this.chunks.delete(c))
+      this.chunks.set(c, p)
+      if (this.chunks.size > 6) this.chunks.delete(this.chunks.keys().next().value as number)
+    }
+    return p
+  }
+  peek(i: number): Uint8Array | null {
+    if (this.volume && this.ready.has(i)) return this.volume.subarray(i * this.n, (i + 1) * this.n)
+    return this.lru.get(i) ?? null
+  }
+  get(i: number): Promise<Uint8Array> {
+    const have = this.peek(i)
+    if (have) return Promise.resolve(have)
+    let p = this.pending.get(i)
+    if (!p) {
+      const s = this.meta.slices[i]
+      p = this.chunk(s.chunk).then((b) => inflateRaw(b.subarray(s.offset, s.offset + s.length))).then((raw) => {
+        if (raw.length !== this.n) throw new Error(`label slice ${i}: ${raw.length} ≠ ${this.n}`)
+        this.pending.delete(i)
+        if (!this.disposed) {
+          if (this.volume) { this.volume.set(raw, i * this.n); this.ready.add(i) }
+          else { this.lru.set(i, raw); while (this.lru.size > this.maxSlices) this.lru.delete(this.lru.keys().next().value as number) }
+          this.emit()
+        }
+        return raw
+      }, (e) => { this.pending.delete(i); throw e })
+      this.pending.set(i, p)
+    }
+    return p
+  }
+  request(i: number, radius = 4) {
+    void this.get(i).catch((e) => console.error(e))
+    for (let d = 1; d <= radius; d++) for (const j of [i + d, i - d]) if (j >= 0 && j < this.meta.count && !this.peek(j)) void this.get(j).catch(() => {})
+  }
+  get hasVolume() { return !!this.volume && this.ready.size === this.meta.count }
+  get volumeData() { return this.hasVolume ? this.volume : null }
+  async loadVolume(): Promise<void> {
+    if (this.hasVolume) return
+    if (!this.volume) {
+      this.volume = new Uint8Array(this.n * this.meta.count)
+      for (const [i, s] of this.lru) { this.volume.set(s, i * this.n); this.ready.add(i) }
+      this.lru.clear()
+    }
+    for (let i = 0; i < this.meta.count; i++) if (!this.ready.has(i)) await this.get(i)
+    this.emit()
+  }
+  dropVolume() { this.volume = null; this.ready.clear(); this.emit() }
+}
