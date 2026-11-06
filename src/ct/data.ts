@@ -285,7 +285,8 @@ export interface LabelMeta {
 export async function loadLabelMeta(study: string, series: string): Promise<LabelMeta | null> {
   const r = await fetch(`${DATA_BASE}${study}/${series}/labels/labels.json`)
   if (!r.ok) return null
-  return (await r.json()) as LabelMeta
+  // some static hosts answer a missing file with an HTML page and status 200
+  try { const m = JSON.parse(await r.text()) as LabelMeta; return Array.isArray(m?.labels) ? m : null } catch { return null }
 }
 
 async function fetchChunkBytes(url: string, file: string, expected: number): Promise<Uint8Array> {

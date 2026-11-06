@@ -281,31 +281,12 @@ export function Viewport(p: Props) {
       ctx.globalAlpha = 1
     }
 
-    // segmentation names on this image
-    const placed: [number, number, number, number][] = []
-    if (anchors.length && p.seg) {
-      ctx.font = font(11); ctx.textBaseline = 'middle'
-      for (const a of anchors) {
-        const def = p.seg.defs.get(a.v); if (!def) continue
-        const x = X(a.u), y = Y(a.w)
-        const t = def.name.replace(/ \((putamen|calvarium|atrium)[^)]*\)/, '').replace(' / cisterns', '')
-        const tw = ctx.measureText(t).width
-        let tx = x + 5, ty = y
-        const clash = (bx: number, by: number) => bx < 0 || bx + tw > size.w || placed.some((b) => bx < b[0] + b[2] + 3 && bx + tw + 3 > b[0] && by - 7 < b[1] + b[3] && by + 7 > b[1])
-        let k = 0
-        while (clash(tx, ty) && k < 8) { k++; ty = y + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 14; if (k === 4) tx = x - 5 - tw }
-        if (clash(tx, ty)) continue
-        placed.push([tx, ty - 7, tw, 14])
-        ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill()
-        halo(t, tx, ty, '#ffffff')
-      }
-    }
-
+    const placed: [number, number, number, number][] = [] // label boxes already drawn (landmarks first, then structures)
     // landmarks within ±1.5 mm of this plane
     if (p.showLandmarks && !p.compact) {
       const tol = 1.5
       ctx.font = font(12); ctx.textBaseline = 'middle'
-      const boxes: [number, number, number, number][] = [...placed] // also avoid structure names already drawn
+      const boxes = placed // landmark names are placed first; structure names avoid them
       // markers are obstacles for every label except their own
       const markers: { id: string; x: number; y: number }[] = []
       const free = (x: number, y: number, w: number, own: string) =>
@@ -341,6 +322,25 @@ export function Viewport(p: Props) {
           boxes.push([tx, ty - 8, tw, 16])
           halo(t, tx, ty, hi ? '#fecdd3' : '#fde68a')
         }
+      }
+    }
+
+    // segmentation names on this image
+    if (anchors.length && p.seg) {
+      ctx.font = font(11); ctx.textBaseline = 'middle'
+      for (const a of anchors) {
+        const def = p.seg.defs.get(a.v); if (!def) continue
+        const x = X(a.u), y = Y(a.w)
+        const t = def.name.replace(/ \((putamen|calvarium|atrium)[^)]*\)/, '').replace(' / cisterns', '')
+        const tw = ctx.measureText(t).width
+        let tx = x + 5, ty = y
+        const clash = (bx: number, by: number) => bx < 0 || bx + tw > size.w || placed.some((b) => bx < b[0] + b[2] + 3 && bx + tw + 3 > b[0] && by - 7 < b[1] + b[3] && by + 7 > b[1])
+        let k = 0
+        while (clash(tx, ty) && k < 8) { k++; ty = y + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 14; if (k === 4) tx = x - 5 - tw }
+        if (clash(tx, ty)) continue
+        placed.push([tx, ty - 7, tw, 14])
+        ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill()
+        halo(t, tx, ty, '#ffffff')
       }
     }
 
