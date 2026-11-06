@@ -32,6 +32,8 @@ export const WINDOWS: WindowPreset[] = [
     use: 'Very narrow window that exaggerates small grey–white differences: insular ribbon, lentiform nucleus margins, subtle early ischaemic hypodensity.' },
   { id: 'bone', name: 'Bone', key: '4', level: 600, width: 2800,
     use: 'Calvarium, skull base foramina, sutures vs fractures, mastoid and paranasal sinus aeration.' },
+  { id: 'cta', name: 'Angio', key: '6', level: 200, width: 700,
+    use: 'CT angiography: contrast-filled arteries (~200–400 HU) bright against brain, bone still visible.' },
   { id: 'soft', name: 'Soft tissue', key: '5', level: 40, width: 350,
     use: 'Scalp, orbits, face and neck soft tissues; scalp haematoma localises the side of impact.' },
 ]
@@ -329,7 +331,49 @@ Object.assign(STRUCTURES, {
 STRUCTURES['mastoid-l'] = { ...STRUCTURES['mastoid-r'], key: 'mastoid-l' }
 STRUCTURES['otic-capsule-l'] = { ...STRUCTURES['otic-capsule-r'], key: 'otic-capsule-l' }
 
-/** Arteries to look for at each level on a non-contrast scan (CTA anatomy pending TopCoW). */
+Object.assign(STRUCTURES, {
+  'anterior-communicating-artery': L('anterior-communicating-artery', 'Anterior communicating artery', 'Short vessel joining the two A1 segments; on CTA a tiny bright bridge in the midline above the optic chiasm.', 'Midline, anterior part of the circle of Willis, between the two ACAs.', 'The commonest site of intracranial aneurysms (~30–35%); rupture gives subarachnoid blood in the interhemispheric fissure and suprasellar cistern.', ['midbrain'], ['vasc-anterior-communicating-artery']),
+  'posterior-communicating-artery': L('posterior-communicating-artery', 'Posterior communicating artery', 'Thin vessel running back from the ICA to the PCA beside the suprasellar cistern; often asymmetric or hypoplastic.', 'Lateral part of the circle of Willis, linking the ICA terminus to the P1/P2 junction.', 'PCom aneurysms can compress the oculomotor nerve (painful third-nerve palsy with a dilated pupil). A large PCom with small P1 is a “fetal” PCA variant.', ['midbrain'], ['vasc-posterior-communicating-artery']),
+})
+
+/** Main brain arteries for the Arteries tab: CTA labels (TopCoW) + what to look for on plain CT. */
+export interface ArteryInfo { key: string; name: string; course: string; plainCt: string; territory: string; cta: string[]; level?: string }
+export const ARTERIES: ArteryInfo[] = [
+  { key: 'internal-carotid-artery', name: 'Internal carotid artery (ICA)', cta: ['Internal carotid artery (R)', 'Internal carotid artery (L)'], level: 'midbrain',
+    course: 'Enters the skull through the carotid canal, runs through the cavernous sinus beside the sella (the siphon), then ends below the anterior perforated substance by dividing into the MCA and ACA.',
+    plainCt: 'Curved, often calcified tubes beside the sella; the terminus sits at the medial end of the Sylvian fissure.',
+    territory: 'Through its branches: most of the cerebral hemisphere (ACA + MCA territories), plus the eye via the ophthalmic artery.' },
+  { key: 'middle-cerebral-artery', name: 'Middle cerebral artery (MCA)', cta: ['Middle cerebral artery (R)', 'Middle cerebral artery (L)'], level: 'midbrain',
+    course: 'M1 runs laterally from the ICA terminus; lenticulostriate perforators arise from it; M2 branches turn up over the insula in the Sylvian fissure; M3/M4 reach the convexity.',
+    plainCt: 'A soft-tissue line in the Sylvian fissure. A hyperdense MCA (or MCA “dot” in the fissure) suggests thrombus.',
+    territory: 'Lateral frontal, parietal and temporal lobes, insula; lenticulostriates supply lentiform nucleus, caudate body and internal capsule.' },
+  { key: 'anterior-cerebral-artery', name: 'Anterior cerebral artery (ACA)', cta: ['Anterior cerebral artery (R)', 'Anterior cerebral artery (L)'], level: 'third-ventricle',
+    course: 'A1 runs medially above the optic chiasm to the anterior communicating artery; A2 turns up into the interhemispheric fissure and runs around the corpus callosum.',
+    plainCt: 'Small dots in the anterior interhemispheric fissure.',
+    territory: 'Medial frontal and parietal lobes (leg area of motor cortex), anterior corpus callosum; recurrent artery of Heubner to caudate head and anterior limb of internal capsule.' },
+  { key: 'anterior-communicating-artery', name: 'Anterior communicating artery (ACom)', cta: ['Anterior communicating artery'], level: 'midbrain',
+    course: 'Short midline bridge between the two A1/A2 junctions, completing the front of the circle of Willis.',
+    plainCt: 'Not visible on plain CT; its region is the anterior suprasellar cistern / interhemispheric fissure.',
+    territory: 'Small perforators to hypothalamus, fornix and anterior cingulate; mainly a collateral pathway between the two carotid systems.' },
+  { key: 'posterior-communicating-artery', name: 'Posterior communicating artery (PCom)', cta: ['Posterior communicating artery (R)', 'Posterior communicating artery (L)'], level: 'midbrain',
+    course: 'Runs back from the ICA to join the PCA, completing the side of the circle of Willis; size varies widely.',
+    plainCt: 'Not visible on plain CT; runs beside the suprasellar cistern, close to the oculomotor nerve.',
+    territory: 'Perforators to thalamus and hypothalamus; collateral between carotid and vertebrobasilar systems.' },
+  { key: 'posterior-cerebral-artery', name: 'Posterior cerebral artery (PCA)', cta: ['Posterior cerebral artery (R)', 'Posterior cerebral artery (L)'], level: 'midbrain',
+    course: 'Arises from the basilar tip (P1), receives the PCom, then winds around the midbrain in the ambient cistern (P2) to the occipital lobe (calcarine and parieto-occipital branches).',
+    plainCt: 'Curvilinear soft-tissue lines in the ambient cisterns around the cerebral peduncles.',
+    territory: 'Occipital lobe, inferior/medial temporal lobe, thalamus (thalamoperforators, thalamogeniculate), midbrain, splenium.' },
+  { key: 'basilar-artery', name: 'Basilar artery', cta: ['Basilar artery'], level: 'pons',
+    course: 'Formed by the two vertebral arteries at the pontomedullary junction, runs up the front of the pons in the prepontine cistern and divides into the two PCAs at the top of the interpeduncular cistern.',
+    plainCt: 'A round dot in the prepontine cistern in front of the pons; a hyperdense basilar suggests thrombosis.',
+    territory: 'Pons (paramedian and circumferential branches), cerebellum (AICA, SCA), midbrain, and via the PCAs the posterior cerebrum.' },
+  { key: 'vertebral-artery', name: 'Vertebral arteries', cta: [], level: 'foramen-magnum',
+    course: 'Ascend through the transverse foramina of C6–C1, loop behind the atlas, pierce the dura and enter through the foramen magnum, then join in front of the medulla to form the basilar artery.',
+    plainCt: 'Soft-tissue or calcified tubes anterolateral to the medulla at the foramen magnum.',
+    territory: 'Medulla and inferior cerebellum (PICA), spinal cord (anterior spinal artery). Not labelled in the CTA data (outside its region of interest).' },
+]
+
+/** Arteries to look for at each level on a non-contrast scan (CTA anatomy: Arteries tab). */
 export const LEVEL_ARTERIES: Record<string, string[]> = {
   'foramen-magnum': ['vertebral-artery'],
   medulla: ['vertebral-artery'],

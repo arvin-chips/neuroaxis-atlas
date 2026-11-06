@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAtlasRecord } from './atlas'
-import { CLINICAL, LEVELS, LEVEL_ARTERIES, STRUCTURES, WINDOWS, type ClinicalTopic } from './content'
+import { ARTERIES, CLINICAL, LEVELS, LEVEL_ARTERIES, STRUCTURES, WINDOWS, type ArteryInfo, type ClinicalTopic } from './content'
 import {
   DATA_BASE, LabelStore, loadAnnotations, loadIndex, loadLabelMeta, loadSeriesMeta, SeriesStore,
   type Annotations, type DataIndex, type ExamInfo, type LabelDef, type LabelMeta, type SeriesMeta,
@@ -10,13 +10,13 @@ import { Viewport, type Hover, type Measure, type SegView, type Zoom } from './V
 import { baseId, checkFind, findQuestion, levelQuestion, structureQuestion, type Question, type QuizKind } from './quiz'
 import { offlineStatus, registerServiceWorker, saveOffline } from './offline'
 
-type Tab = 'level' | 'structure' | 'clinical' | 'quiz' | 'exam'
+type Tab = 'level' | 'structure' | 'arteries' | 'clinical' | 'quiz' | 'exam'
 const PLANES: Plane[] = ['axial', 'coronal', 'sagittal']
 const ZOOMS: { id: Zoom; label: string }[] = [{ id: 'fit', label: 'Fit' }, { id: 1, label: '100%' }, { id: 2, label: '200%' }, { id: 4, label: '400%' }]
-const ACCENT: Record<string, string> = { 'CQ500-CT-235': '#38bdf8', 'CQ500-CT-298': '#f59e0b' }
+const ACCENT: Record<string, string> = { 'CQ500-CT-235': '#38bdf8', 'CQ500-CT-298': '#f59e0b', 'TopCoW2024-ct-066': '#f87171' }
 const key = (study: string, series: string) => `${study}/${series}`
 const fmtMB = (b: number) => `${(b / 1e6).toFixed(1)} MB`
-const seriesLabel = (s: string) => s.startsWith('axial-5mm') ? '5 mm axial' : s.includes('bone') ? '0.625 mm bone' : '0.625 mm thin'
+const seriesLabel = (s: string) => s.startsWith('axial-5mm') ? '5 mm axial' : s.includes('bone') ? '0.625 mm bone' : s.startsWith('cta') ? 'CTA 0.44 mm' : '0.625 mm thin'
 
 export default function CtApp() {
   const [index, setIndex] = useState<DataIndex | null>(null)
@@ -59,6 +59,8 @@ export default function CtApp() {
   const [segText, setSegText] = useState(true)
   const [segHidden, setSegHidden] = useState<Set<number>>(new Set())
   const [segIsolate, setSegIsolate] = useState<number | null>(null)
+  const [mip, setMip] = useState(0)
+  const [arteryFocus, setArteryFocus] = useState<string | null>(null)
 
   /* ------------------------------------------------------------ loading */
 
@@ -154,7 +156,8 @@ export default function CtApp() {
     if (!e) return
     setExamId(id); setSeriesId(e.series[0]); setPlane('axial'); setMeasure(null); setFocus(null); setSelected(null)
     setQuestion(null); setAnswer(null)
-    const w = WINDOWS.find((x) => x.id === (id === 'CQ500-CT-298' ? 'bone' : 'brain'))!
+    setArteryFocus(null); setMip(id.startsWith('TopCoW') ? 10 : 0)
+    const w = WINDOWS.find((x) => x.id === (id === 'CQ500-CT-298' ? 'bone' : id.startsWith('TopCoW') ? 'cta' : 'brain'))!
     setWin({ c: w.level, w: w.width })
   }
 
@@ -268,11 +271,11 @@ export default function CtApp() {
   if (error) return <div className="ct-fatal"><h1>CT Anatomy</h1><p>{error}</p><p>The image data is kept in the separate <code>ct-anatomy-data</code> repository; serve its <code>viewer/</code> folder at <code>{DATA_BASE}</code> or pass <code>?data=…</code>.</p></div>
   if (!index || !exam || !meta || !geo || !store || !cursor || !ann) return <div className="ct-fatal"><p>Loading exam index…</p></div>
 
-  const thumbs = PLANES.filter((pl) => pl !== plane)
   const curLabelMeta = labelMetas.get(key(examId, plane === 'axial' ? seriesId : thinSeries ?? seriesId)) ?? null
   const defs = new Map<number, LabelDef>((curLabelMeta?.labels ?? []).map((d) => [d.id, d]))
   const emphasis = new Set<number>()
   if (highlight && curLabelMeta) for (const d of curLabelMeta.labels) if (d.teach && (highlight.has(d.teach) || highlight.has(d.source))) emphasis.add(d.id)
+  if (arteryFocus && curLabelMeta) for (const d of curLabelMeta.labels) if (d.teach === arteryFocus) emphasis.add(d.id)
   const seg: SegView = {
     show: segShow && !(quizActive && question?.kind !== 'name-structure'), opacity: segOpacity, outline: segOutline, text: segText && !quizActive,
     hidden: segHidden, isolate: segIsolate, emphasis, defs,
@@ -284,54 +287,75 @@ export default function CtApp() {
     landmarks: ann.landmarks, levels: ann.levels, showLandmarks: showLandmarks && !quizActive, showLabels: showLabels && !quizActive,
     showCrosshair: crosshair && !quizActive, highlight, accent, version, seg,
     labels: labelStoreFor(examId, pl === 'axial' && s === store ? seriesId : thinSeries ?? seriesId),
+    examLabel: exam.patientLabel, mipMm: mip,
   })
   const thinStore = thinSeries ? storeFor(examId, thinSeries) : null
   const thinGeo = thinSeries ? geoOf(metas.get(key(examId, thinSeries))!) : null
   const mainStore = plane === 'axial' ? store : thinStore!
   const mainGeo = plane === 'axial' ? geo : thinGeo!
 
+  const ctaExam = index.exams.find((e) => e.id.startsWith('TopCoW'))
+  const showArtery = (art: ArteryInfo) => {
+    if (!ctaExam) return
+    if (examId !== ctaExam.id) chooseExam(ctaExam.id)
+    setArteryFocus(art.key); setSegIsolate(null); setTab('arteries')
+    // jump to the slice where this artery's labels are best represented (after the exam switch renders)
+    setTimeout(() => {
+      const ser = ctaExam.series[0], lm = labelMetas.get(key(ctaExam.id, ser)), sm = metas.get(key(ctaExam.id, ser))
+      if (!lm || !sm) return
+      const ids = lm.labels.filter((d) => d.teach === art.key).map((d) => d.id)
+      const ks = lm.slices.filter((x) => x.present.some((v) => ids.includes(v))).map((x) => x.i)
+      if (!ks.length) return
+      const z = sm.slices[ks[ks.length >> 1]].imagePositionPatient[2]
+      setCursors((m) => { const c = m.get(ctaExam.id); return c ? new Map(m).set(ctaExam.id, [c[0], c[1], z]) : m })
+    }, 0)
+  }
+  const plainLevel = (lvl: string) => { chooseExam('CQ500-CT-235'); setTimeout(() => goLevelIn('CQ500-CT-235', lvl), 0) }
+  const goLevelIn = (exId: string, lvl: string) => {
+    const l = notes.get(exId)?.levels.find((x) => x.id === lvl)
+    if (!l) return
+    setSeriesId('axial-5mm-standard'); setPlane('axial')
+    setCursors((m) => { const c = m.get(exId); return c ? new Map(m).set(exId, [c[0], c[1], l.z]) : m })
+  }
+  const winId = WINDOWS.find((w) => w.level === win.c && w.width === win.w)?.id ?? 'custom'
+
   return (
     <div className="ct-app" style={{ ['--exam' as string]: accent }}>
-      <header className="ct-header">
-        <button className="ct-icon ct-narrow-only" onClick={() => setSidebar((s) => !s)} aria-label="Show controls">☰</button>
-        <div className="ct-brand"><strong>CT Anatomy</strong><span>Normal non-contrast head CT</span></div>
-        <div className="ct-exams" role="radiogroup" aria-label="Examination">
+      <header className="ct-top">
+        <button className="ct-icon" onClick={() => setSidebar((s) => !s)} aria-label="More controls">☰</button>
+        <div className="ct-tseg" role="radiogroup" aria-label="Examination">
           {index.exams.map((e) => (
-            <button key={e.id} role="radio" aria-checked={e.id === examId} className={`ct-exam${e.id === examId ? ' is-on' : ''}`}
-              style={{ ['--c' as string]: ACCENT[e.id] }} onClick={() => chooseExam(e.id)}>
-              <b>{e.patientLabel}</b><span>{e.purpose}</span>
+            <button key={e.id} role="radio" aria-checked={e.id === examId} className={e.id === examId ? 'is-on' : ''} style={{ ['--c' as string]: ACCENT[e.id] }}
+              onClick={() => chooseExam(e.id)} title={e.title}>
+              <i className="ct-dot" />{e.patientLabel.replace('Patient ', '')} · {e.purpose.replace(' anatomy', '').replace('Skull and skull-base', 'Skull')}
             </button>
           ))}
         </div>
+        {exam.series.length > 1 && (
+          <select className="ct-tsel" aria-label="Series" value={seriesId} onChange={(e) => { setSeriesId(e.target.value); if (e.target.value.startsWith('axial-5mm')) setPlane('axial') }}>
+            {exam.series.map((x) => <option key={x} value={x}>{seriesLabel(x)}</option>)}
+          </select>
+        )}
+        <div className="ct-tseg">
+          {PLANES.map((pl) => <button key={pl} className={plane === pl ? 'is-on' : ''} onClick={() => choosePlane(pl)}>{pl === 'axial' ? 'Ax' : pl === 'coronal' ? 'Cor' : 'Sag'}</button>)}
+        </div>
+        <select className="ct-tsel" aria-label="Window" value={winId} onChange={(e) => applyWindow(e.target.value)}>
+          {WINDOWS.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+          {winId === 'custom' && <option value="custom">W {win.w} / L {win.c}</option>}
+        </select>
+        {examId.startsWith('TopCoW') && plane === 'axial' && (
+          <select className="ct-tsel" aria-label="MIP slab" value={mip} onChange={(e) => setMip(Number(e.target.value))}>
+            {[0, 5, 10, 20].map((m) => <option key={m} value={m}>{m ? `MIP ${m} mm` : 'No MIP'}</option>)}
+          </select>
+        )}
       </header>
-      <div className="ct-banner">
-        <span className="ct-dot" /> <b>{exam.patientLabel}</b> · {exam.id} · {exam.title}
-        <span className="ct-banner-note">{index.exams.length > 1 ? `Different person from ${index.exams.filter((e) => e.id !== examId).map((e) => e.patientLabel).join(', ')}` : ''}</span>
-      </div>
 
       <div className="ct-body">
-        {sidebar && <div className="ct-backdrop ct-narrow-only" onClick={() => setSidebar(false)} aria-hidden="true" />}
+        {sidebar && <div className="ct-backdrop" onClick={() => setSidebar(false)} aria-hidden="true" />}
         <aside className={`ct-side${sidebar ? ' is-open' : ''}`} aria-label="Controls">
-          <div className="ct-side-head ct-narrow-only"><b>Controls</b><button className="ct-icon" onClick={() => setSidebar(false)} aria-label="Close controls">✕</button></div>
+          <div className="ct-side-head"><b>Controls</b><button className="ct-icon" onClick={() => setSidebar(false)} aria-label="Close controls">✕</button></div>
           <section>
-            <h3>Series</h3>
-            <div className="ct-seg">
-              {exam.series.map((s) => (
-                <button key={s} className={s === seriesId ? 'is-on' : ''} onClick={() => { setSeriesId(s); if (s.startsWith('axial-5mm')) setPlane('axial') }}>
-                  {seriesLabel(s)}
-                </button>
-              ))}
-            </div>
-            <p className="ct-hint">{meta.role}. {meta.convolutionKernel} kernel, {meta.sliceThickness} mm, {meta.count} images.</p>
-          </section>
-          <section>
-            <h3>Window</h3>
-            <div className="ct-chips">
-              {WINDOWS.map((w) => (
-                <button key={w.id} className={`ct-chip${win.c === w.level && win.w === w.width ? ' is-on' : ''}`} onClick={() => applyWindow(w.id)} title={w.use}>{w.name}</button>
-              ))}
-              {meta.dicomWindowCenter != null && <button className="ct-chip" onClick={() => applyWindow('dicom')} title="Window stored in the DICOM header">DICOM</button>}
-            </div>
+            <h3>Window / level</h3>
             <label className="ct-slider" htmlFor="wl-c"><span>Level</span>
               <input id="wl-c" type="range" min={-1000} max={1500} value={win.c} onChange={(e) => setWin({ ...win, c: Number(e.target.value) })} />
               <input className="ct-num" type="number" aria-label="Window level" value={win.c} onChange={(e) => setWin({ ...win, c: Number(e.target.value) })} />
@@ -340,83 +364,29 @@ export default function CtApp() {
               <input id="wl-w" type="range" min={1} max={4000} value={win.w} onChange={(e) => setWin({ ...win, w: Math.max(1, Number(e.target.value)) })} />
               <input className="ct-num" type="number" aria-label="Window width" value={win.w} min={1} onChange={(e) => setWin({ ...win, w: Math.max(1, Number(e.target.value)) })} />
             </label>
-            <p className="ct-hint">DICOM linear VOI on Hounsfield units. Mouse: right-drag. Keys 1–5.</p>
+            {meta.dicomWindowCenter != null && <button className="ct-btn" onClick={() => applyWindow('dicom')}>Window from the image file</button>}
           </section>
           <section>
             <h3>Zoom</h3>
             <div className="ct-seg">
               {ZOOMS.map((z) => <button key={String(z.id)} className={zoom === z.id ? 'is-on' : ''} onClick={() => setZoom(z.id)}>{z.label}</button>)}
             </div>
-            <p className="ct-hint">100% = one CT pixel per screen point. Enlarged pixels are drawn as blocks, never interpolated. Pinch to zoom, two fingers to pan.</p>
+            <p className="ct-hint">100% = one CT pixel per screen point; enlarged pixels are blocks, never interpolated. Pinch to zoom, two fingers to pan.</p>
           </section>
           <section>
-            <h3>Plane</h3>
-            <div className="ct-seg ct-cap">
-              {PLANES.map((pl) => <button key={pl} className={plane === pl ? 'is-on' : ''} onClick={() => choosePlane(pl)}>{pl}</button>)}
-            </div>
-            {!volumeReady && <p className="ct-hint">Coronal and sagittal views are built from the {thinGeo?.count}-image thin series ({fmtMB((thinGeo?.cols ?? 0) * (thinGeo?.rows ?? 0) * (thinGeo?.count ?? 0) * 2)} in memory).</p>}
-            {volumeReady && <button className="ct-chip" onClick={() => { thinStore?.dropVolume(); setVolKey(null); setPlane('axial') }}>Release 3-plane volume</button>}
-          </section>
-          <section>
-            <h3>Overlays</h3>
-            {curLabelMeta && <label className="ct-check"><input type="checkbox" checked={segShow} onChange={(e) => setSegShow(e.target.checked)} /> Segmentation ({curLabelMeta.labels.length} structures)</label>}
+            <h3>Show on image</h3>
+            {curLabelMeta && <label className="ct-check"><input type="checkbox" checked={segShow} onChange={(e) => setSegShow(e.target.checked)} /> Coloured structures</label>}
+            {curLabelMeta && <label className="ct-check"><input type="checkbox" checked={segText} onChange={(e) => setSegText(e.target.checked)} /> Structure names</label>}
+            {curLabelMeta && <label className="ct-check"><input type="checkbox" checked={segOutline} onChange={(e) => setSegOutline(e.target.checked)} /> Outlines only</label>}
+            {curLabelMeta && <label className="ct-slider" htmlFor="seg-op"><span>Opacity</span><input id="seg-op" type="range" min={0.1} max={0.9} step={0.05} value={segOpacity} onChange={(e) => setSegOpacity(Number(e.target.value))} /><span className="ct-num">{Math.round(segOpacity * 100)}%</span></label>}
             <label className="ct-check"><input type="checkbox" checked={showLandmarks} onChange={(e) => setShowLandmarks(e.target.checked)} /> Landmarks</label>
-            <label className="ct-check"><input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} /> Labels</label>
             <label className="ct-check"><input type="checkbox" checked={crosshair} onChange={(e) => setCrosshair(e.target.checked)} /> Crosshair</label>
             <label className="ct-check"><input type="checkbox" checked={measureMode} onChange={(e) => setMeasureMode(e.target.checked)} /> Measure (drag)</label>
-            {focus && <button className="ct-chip" onClick={() => setFocus(null)}>Clear highlight</button>}
-          </section>
-          {curLabelMeta && (
-            <section>
-              <h3>Structures</h3>
-              <label className="ct-check"><input type="checkbox" checked={segText} onChange={(e) => setSegText(e.target.checked)} /> Names on image</label>
-              <label className="ct-check"><input type="checkbox" checked={segOutline} onChange={(e) => setSegOutline(e.target.checked)} /> Outline only</label>
-              <label className="ct-slider" htmlFor="seg-op"><span>Opacity</span><input id="seg-op" type="range" min={0.1} max={0.9} step={0.05} value={segOpacity} onChange={(e) => setSegOpacity(Number(e.target.value))} /><span className="ct-num">{Math.round(segOpacity * 100)}%</span></label>
-              <div className="ct-chips">
-                <button className="ct-chip" onClick={() => setSegHidden(new Set())}>Show all</button>
-                <button className="ct-chip" onClick={() => setSegHidden(new Set(curLabelMeta.labels.map((d) => d.id)))}>Hide all</button>
-                {segIsolate != null && <button className="ct-chip is-on" onClick={() => setSegIsolate(null)}>End isolation</button>}
-              </div>
-              {[...new Set(curLabelMeta.labels.map((d) => d.group))].map((g) => {
-                const items = curLabelMeta.labels.filter((d) => d.group === g)
-                const allOn = items.every((d) => !segHidden.has(d.id))
-                return (
-                  <details key={g} className="ct-group" open={['Deep grey matter', 'Ventricles', 'Brainstem & cerebellum', 'Lobes'].includes(g)}>
-                    <summary>
-                      <input type="checkbox" aria-label={`Show ${g}`} checked={allOn} onClick={(e) => e.stopPropagation()}
-                        onChange={() => setSegHidden((h) => { const n = new Set(h); for (const d of items) { if (allOn) n.add(d.id); else n.delete(d.id) } return n })} />
-                      {g} <span className="ct-hint">({items.length})</span>
-                    </summary>
-                    <ul className="ct-structs">
-                      {items.map((d) => (
-                        <li key={d.id} className={segIsolate === d.id ? 'is-iso' : ''}>
-                          <input type="checkbox" aria-label={`Show ${d.name}`} checked={!segHidden.has(d.id)}
-                            onChange={() => setSegHidden((h) => { const n = new Set(h); if (n.has(d.id)) n.delete(d.id); else n.add(d.id); return n })} />
-                          <span className="ct-swatch" style={{ background: d.color }} />
-                          <button className="ct-link" onClick={() => { setSelected(`label:${d.id}`); setTab('structure'); goToLabel(d.id) }}>{d.name}</button>
-                          <button className="ct-mini" onClick={() => { setSegIsolate(segIsolate === d.id ? null : d.id); if (segIsolate !== d.id) goToLabel(d.id) }}>{segIsolate === d.id ? '×' : 'iso'}</button>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )
-              })}
-              <p className="ct-hint">{curLabelMeta.note}</p>
-            </section>
-          )}
-          <section>
-            <h3>Levels</h3>
-            <ol className="ct-levels">
-              {[...levels].reverse().map((l) => (
-                <li key={l.id}><button className={here?.anchor.id === l.id && !(quizActive && question?.kind === 'level') ? 'is-here' : ''} onClick={() => { goLevel(l.id); if (tab !== 'quiz') setTab('level') }}>
-                  {LEVELS.find((x) => x.id === l.id)?.name ?? l.id}
-                </button></li>
-              ))}
-            </ol>
+            {volumeReady && <button className="ct-btn" onClick={() => { thinStore?.dropVolume(); setVolKey(null); setPlane('axial') }}>Free 3-plane memory</button>}
           </section>
           <section>
             <h3>Offline</h3>
-            <button className="ct-chip" disabled={!!offline.progress} onClick={async () => {
+            <button className="ct-btn" disabled={!!offline.progress} onClick={async () => {
               try {
                 const labelList = [...labelMetas.values()].filter((x): x is LabelMeta => !!x)
                 const n = await saveOffline(index, [...metas.values()], labelList, (d, t) => setOffline((o) => ({ ...o, progress: `${fmtMB(d)} / ${fmtMB(t)}` })))
@@ -429,57 +399,117 @@ export default function CtApp() {
         </aside>
 
         <main className="ct-main">
-          <div className="ct-stage">
-            <div className="ct-mainview">
-              {plane !== 'axial' && !volumeReady ? (
-                <div className="ct-need">{volProgress ? <>Building 3-plane volume… {volProgress}</> : <button className="ct-chip" onClick={() => void loadVolume()}>Load 3-plane volume</button>}</div>
-              ) : (
-                <Viewport {...viewProps(plane, mainStore, mainGeo)} zoom={zoom} measureMode={measureMode} measure={measure} onMeasure={setMeasure}
-                  onHover={setHover} onPick={onPick} />
-              )}
-              {hover && !quizActive && (
-                <div className="ct-readout">{hover.hu == null ? 'Outside scan field' : `${hover.hu} HU`}{hover.label ? ` · ${hover.label.name}` : ''}{hover.landmark ? ` · ${hover.landmark.name}` : ''}</div>
-              )}
-              {here?.info && !(quizActive && question?.kind === 'level') && (
-                <div className="ct-here">≈ {here.info.name}{Math.abs(here.dz) > 2.5 ? ` (${here.dz > 0 ? '+' : ''}${here.dz.toFixed(0)} mm)` : ''}</div>
-              )}
-            </div>
-            <SliceBar geo={mainGeo} plane={plane} cursor={cursor} onCursor={setCursor} />
+          <div className="ct-mainview">
+            {plane !== 'axial' && !volumeReady ? (
+              <div className="ct-need">{volProgress ? <>Building coronal/sagittal… {volProgress}</> : <button className="ct-btn" onClick={() => void loadVolume()}>Build coronal/sagittal</button>}</div>
+            ) : (
+              <Viewport {...viewProps(plane, mainStore, mainGeo)} zoom={zoom} measureMode={measureMode} measure={measure} onMeasure={setMeasure}
+                onHover={setHover} onPick={onPick} />
+            )}
+            {hover && !quizActive && (
+              <div className="ct-readout">{hover.hu == null ? 'Outside scan field' : `${Math.round(hover.hu)} HU`}{hover.label ? ` · ${hover.label.name}` : ''}{hover.landmark ? ` · ${hover.landmark.name}` : ''}</div>
+            )}
+            {here?.info && !(quizActive && question?.kind === 'level') && (
+              <div className="ct-here">{here.info.short}</div>
+            )}
           </div>
-          <div className="ct-thumbs">
-            {thumbs.map((pl) => (
-              <button key={pl} className="ct-thumb" onClick={() => choosePlane(pl)} aria-label={`Show ${pl}`}>
-                {pl !== 'axial' && !volumeReady
-                  ? <span className="ct-thumb-empty">{pl}<small>{volProgress ? volProgress : 'tap to build'}</small></span>
-                  : <Viewport {...viewProps(pl, pl === 'axial' ? store : thinStore!, pl === 'axial' ? geo : thinGeo!)} zoom="fit" compact />}
-              </button>
-            ))}
-          </div>
-          <div className="ct-credit">{index.source}. Licence: {index.license}.</div>
+          <SliceBar geo={mainGeo} plane={plane} cursor={cursor} onCursor={setCursor} />
         </main>
 
         <aside className="ct-panel">
           <div className="ct-tabs" role="tablist">
-            {(['level', 'structure', 'clinical', 'quiz', 'exam'] as Tab[]).map((t) => (
+            {(['level', 'structure', 'arteries', 'clinical', 'quiz', 'exam'] as Tab[]).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? 'is-on' : ''}
-                onClick={() => { setTab(t); if (t === 'quiz' && !question) newQuestion() }}>{t[0].toUpperCase() + t.slice(1)}</button>
+                onClick={() => { setTab(t); if (t === 'quiz' && !question) newQuestion() }}>{t === 'structure' ? 'Structures' : t[0].toUpperCase() + t.slice(1)}</button>
             ))}
           </div>
           <div className="ct-tabbody">
-            {tab === 'level' && <LevelPanel info={here?.info} focused={focus?.kind === 'level' ? focus.id : null}
-              onHighlight={(id) => setFocus(focus?.id === id ? null : { kind: 'level', id })}
-              onSelect={(k) => { const lm = ann.landmarks.find((x) => baseId(x.id) === baseId(k)); if (lm) goLandmark(lm.id); else { setSelected(k); setTab('structure') } }} />}
-            {tab === 'structure' && <StructurePanel id={selected} ann={ann} onLandmark={goLandmark} onLevel={goLevel} levels={levels.map((l) => l.id)}
-              labelDef={selected?.startsWith('label:') ? defs.get(Number(selected.slice(6))) ?? null : null}
-              onIsolate={(id) => { setSegIsolate(id); goToLabel(id) }} />}
+            {tab === 'level' && (levels.length ? <>
+              <div className="ct-levelrow">
+                {levels.map((l) => (
+                  <button key={l.id} className={here?.anchor.id === l.id && !(quizActive && question?.kind === 'level') ? 'is-on' : ''} onClick={() => goLevel(l.id)}>
+                    {LEVELS.find((x) => x.id === l.id)?.short ?? l.id}
+                  </button>
+                ))}
+              </div>
+              <LevelPanel info={here?.info} focused={focus?.kind === 'level' ? focus.id : null}
+                onHighlight={(id) => setFocus(focus?.id === id ? null : { kind: 'level', id })}
+                onSelect={(k) => { const lm = ann.landmarks.find((x) => baseId(x.id) === baseId(k)); if (lm) goLandmark(lm.id); else { setSelected(k); setTab('structure') } }} />
+            </> : <p className="ct-hint">This exam is used for arterial anatomy; see the Arteries tab. Reference levels are on Patients A and B.</p>)}
+            {tab === 'structure' && <>
+              <StructurePanel id={selected} ann={ann} onLandmark={goLandmark} onLevel={goLevel} levels={levels.map((l) => l.id)}
+                labelDef={selected?.startsWith('label:') ? defs.get(Number(selected.slice(6))) ?? null : null}
+                onIsolate={(id) => { setSegIsolate(id); goToLabel(id) }} />
+              {curLabelMeta && (
+                <div className="ct-structlist">
+                  <h4>All structures on this exam ({curLabelMeta.labels.length})</h4>
+                  <div className="ct-row">
+                    <button className="ct-btn" onClick={() => setSegHidden(new Set())}>Show all</button>
+                    <button className="ct-btn" onClick={() => setSegHidden(new Set(curLabelMeta.labels.map((d) => d.id)))}>Hide all</button>
+                    {segIsolate != null && <button className="ct-btn is-on" onClick={() => setSegIsolate(null)}>End isolation</button>}
+                  </div>
+                  {[...new Set(curLabelMeta.labels.map((d) => d.group))].map((g) => {
+                    const items = curLabelMeta.labels.filter((d) => d.group === g)
+                    const allOn = items.every((d) => !segHidden.has(d.id))
+                    return (
+                      <details key={g} className="ct-group">
+                        <summary>
+                          <input type="checkbox" aria-label={`Show ${g}`} checked={allOn} onClick={(e) => e.stopPropagation()}
+                            onChange={() => setSegHidden((h) => { const n = new Set(h); for (const d of items) { if (allOn) n.add(d.id); else n.delete(d.id) } return n })} />
+                          {g} <span className="ct-hint">{items.length}</span>
+                        </summary>
+                        <ul className="ct-structs">
+                          {items.map((d) => (
+                            <li key={d.id} className={segIsolate === d.id ? 'is-iso' : ''}>
+                              <input type="checkbox" aria-label={`Show ${d.name}`} checked={!segHidden.has(d.id)}
+                                onChange={() => setSegHidden((h) => { const n = new Set(h); if (n.has(d.id)) n.delete(d.id); else n.add(d.id); return n })} />
+                              <span className="ct-swatch" style={{ background: d.color }} />
+                              <button className="ct-link" onClick={() => { setSelected(`label:${d.id}`); goToLabel(d.id) }}>{d.name}</button>
+                              <button className="ct-mini" onClick={() => { setSegIsolate(segIsolate === d.id ? null : d.id); if (segIsolate !== d.id) goToLabel(d.id) }}>{segIsolate === d.id ? '×' : 'iso'}</button>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )
+                  })}
+                  <p className="ct-hint">{curLabelMeta.note}</p>
+                </div>
+              )}
+            </>}
+            {tab === 'arteries' && <ArteriesPanel onCta={showArtery} onPlain={plainLevel} focus={arteryFocus} hasCta={!!ctaExam} onCtaExam={examId.startsWith('TopCoW')}
+              onClear={() => setArteryFocus(null)} openCta={() => ctaExam && chooseExam(ctaExam.id)} />}
             {tab === 'clinical' && <ClinicalPanel id={clinicalId} onTopic={setClinicalId} focused={focus?.kind === 'clinical' ? focus.id : null}
               onFocus={(t) => { setFocus(focus?.id === t.id ? null : { kind: 'clinical', id: t.id }); applyWindow(t.window) }} onLevel={goLevel} levels={levels.map((l) => l.id)} />}
             {tab === 'quiz' && <QuizPanel kind={quizKind} setKind={(k) => { setQuizKind(k); newQuestion(k) }} q={question} answer={answer} score={score}
               onAnswer={(id) => question && !answer && giveAnswer(id, id === question.answer)} onNext={() => newQuestion()} />}
-            {tab === 'exam' && <ExamPanel exam={exam} metas={exam.series.map((s) => metas.get(key(examId, s))!)} stores={stores.current} ann={ann} index={index} />}
+            {tab === 'exam' && <ExamPanel exam={exam} metas={exam.series.map((x) => metas.get(key(examId, x))!)} stores={stores.current} ann={ann} index={index} />}
           </div>
         </aside>
       </div>
+    </div>
+  )
+}
+
+function ArteriesPanel(p: { onCta: (a: ArteryInfo) => void; onPlain: (lvl: string) => void; focus: string | null; hasCta: boolean; onCtaExam: boolean; onClear: () => void; openCta: () => void }) {
+  return (
+    <div className="ct-card">
+      <h2>Brain arteries</h2>
+      <p>The arteries are seen best on <b>Patient C</b>, a CT angiogram with the circle of Willis labelled by the TopCoW experts. Use a 10–20 mm MIP to follow each vessel. On the plain scans (Patients A and B) most arteries are only visible where CSF or calcium outlines them.</p>
+      {p.hasCta && !p.onCtaExam && <button className="ct-btn is-on" onClick={p.openCta}>Open the CT angiogram</button>}
+      {p.focus && <button className="ct-btn" onClick={p.onClear}>Show all arteries</button>}
+      {ARTERIES.map((a) => (
+        <div key={a.key} className={`ct-artery${p.focus === a.key ? ' is-on' : ''}`}>
+          <h3>{a.name}</h3>
+          <p><b>Course.</b> {a.course}</p>
+          <p><b>On plain CT.</b> {a.plainCt}</p>
+          <p><b>Supplies.</b> {a.territory}</p>
+          <div className="ct-row">
+            {a.cta.length > 0 && p.hasCta && <button className="ct-btn" onClick={() => p.onCta(a)}>Show on CTA</button>}
+            {a.level && <button className="ct-btn" onClick={() => p.onPlain(a.level!)}>Plain CT level</button>}
+          </div>
+        </div>
+      ))}
+      <p className="ct-hint">Smaller branches (SCA, AICA, PICA, perforators, distal MCA/ACA/PCA branches) are not labelled in the TopCoW data.</p>
     </div>
   )
 }
@@ -637,7 +667,7 @@ function ExamPanel(p: { exam: ExamInfo; metas: SeriesMeta[]; stores: Map<string,
   return (
     <div className="ct-card">
       <h2>{p.exam.patientLabel}: {p.exam.title}</h2>
-      <p>{p.exam.id}. {p.exam.purpose}. A different person from the other examination; positions are never shared between them.</p>
+      <p>{p.exam.id}. {p.exam.purpose}. A different person from the other examinations; positions are never shared between them.{p.exam.note ? ` ${p.exam.note}` : ''}</p>
       {p.metas.map((m) => {
         const s = p.stores.get(`${m.study}/${m.series}`)
         return (
@@ -657,7 +687,8 @@ function ExamPanel(p: { exam: ExamInfo; metas: SeriesMeta[]; stores: Map<string,
       })}
       {mem && <p className="ct-hint">JS heap in use: {fmtMB(mem.usedJSHeapSize)}</p>}
       <h4>Source and licence</h4>
-      <p>{p.index.source}. {p.index.license}. {p.index.licenseUrl && <a href={p.index.licenseUrl} target="_blank" rel="noreferrer">Dataset page</a>}</p>
+      {p.exam.source ? <p>{p.exam.source}. {p.exam.license}.</p>
+        : <p>{p.index.source}. {p.index.license}. {p.index.licenseUrl && <a href={p.index.licenseUrl} target="_blank" rel="noreferrer">Dataset page</a>}</p>}
       <p className="ct-hint">Pixel values are the original DICOM stored values, losslessly compressed and verified value-for-value against the source DICOM. Overlays are drawn on a separate layer.</p>
       <h4>Annotations</h4><p className="ct-hint">{p.ann.method}</p>
     </div>

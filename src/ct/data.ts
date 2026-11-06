@@ -28,6 +28,9 @@ export interface ExamInfo {
   title: string
   purpose: string
   series: string[]
+  note?: string
+  source?: string
+  license?: string
 }
 export interface DataIndex { exams: ExamInfo[]; source: string; license: string; licenseUrl?: string }
 

@@ -96,7 +96,7 @@ export function reformat<T extends Int16Array | Uint8Array>(vol: T, g: Geo, plan
 export function makeLut(m: SeriesMeta, center: number, width: number): { lut: Uint8Array; min: number } {
   const min = m.pixelRepresentation === 1 ? -32768 : 0
   const max = m.pixelRepresentation === 1 ? 32767 : 65535
-  const lo = Math.max(min, -4096), hi = Math.min(max, 8191) // stored range used by CT; beyond clamps
+  const lo = min, hi = max // full stored range: rescale slope/intercept can map any stored value into HU
   const lut = new Uint8Array(hi - lo + 1)
   const w = Math.max(1, width), c = center
   const a = c - 0.5 - (w - 1) / 2, b = c - 0.5 + (w - 1) / 2

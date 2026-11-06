@@ -53,6 +53,8 @@ interface Props {
   version: number // bump to redraw when the store decodes new slices
   labels?: LabelStore | null
   seg?: SegView
+  mipMm?: number // axial thick-slab maximum-intensity projection (display only), 0 = off
+  examLabel?: string
 }
 
 const PAIRED = new Set(['caudate_nucleus', 'lentiform_nucleus', 'thalamus', 'internal_capsule', 'insular_cortex', 'cerebellum', 'frontal_lobe', 'parietal_lobe', 'temporal_lobe', 'occipital_lobe', 'sinus_maxillary', 'sinus_frontal'])
@@ -94,7 +96,8 @@ export function Viewport(p: Props) {
   useEffect(() => { setPan([0, 0]); setFreeScale(null) }, [p.zoom, plane, meta.series, meta.study])
 
   // request decode for axial (progressive)
-  useEffect(() => { if (plane === 'axial') store.request(index, p.compact ? 0 : 6) }, [store, plane, index, p.compact])
+  const mipHalf = plane === 'axial' && p.mipMm ? Math.max(1, Math.round(p.mipMm / 2 / geo.stepMm)) : 0
+  useEffect(() => { if (plane === 'axial') store.request(index, p.compact ? 0 : Math.max(6, mipHalf)) }, [store, plane, index, p.compact, mipHalf])
   useEffect(() => { if (plane === 'axial' && p.labels && p.seg?.show !== false) p.labels.request(index, p.compact ? 0 : 4) }, [p.labels, plane, index, p.compact, p.seg?.show])
 
   // physical scale: CSS px per mm
@@ -110,13 +113,23 @@ export function Viewport(p: Props) {
   const pixels = useMemo(() => {
     const key = `${meta.study}/${meta.series}/${plane}/${index}`
     let data: Int16Array | null = null
-    if (plane === 'axial') data = store.peek(index)
+    if (plane === 'axial' && mipHalf) {
+      // thick-slab MIP: per-pixel maximum of the stored values over the slab (display only)
+      const lo = Math.max(0, index - mipHalf), hi = Math.min(geo.count - 1, index + mipHalf)
+      const parts: Int16Array[] = []
+      for (let k = lo; k <= hi; k++) { const s = store.peek(k); if (s) parts.push(s) }
+      if (parts.length === hi - lo + 1) {
+        const out = new Int16Array(parts[0])
+        for (let j = 1; j < parts.length; j++) { const q = parts[j]; for (let i = 0; i < out.length; i++) if (q[i] > out[i]) out[i] = q[i] }
+        data = out
+      }
+    } else if (plane === 'axial') data = store.peek(index)
     else if (p.volumeReady) { const vol = store.volumeData; if (vol) data = reformat(vol, geo, plane, index) }
     if (data) lastGood.current = { key, data }
     const showing = data ?? (lastGood.current && lastGood.current.key.startsWith(`${meta.study}/${meta.series}/${plane}/`) ? lastGood.current.data : null)
     return { data: showing, exact: !!data }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, plane, index, p.volumeReady, geo, p.version, meta])
+  }, [store, plane, index, p.volumeReady, geo, p.version, meta, mipHalf])
 
   const lut = useMemo(() => makeLut(meta, p.center, p.width), [meta, p.center, p.width])
 
@@ -124,11 +137,22 @@ export function Viewport(p: Props) {
   const labelPix = useMemo(() => {
     const L = p.labels
     if (!L) return null
+    if (plane === 'axial' && mipHalf) {
+      // label shown on the MIP: the label of the slice that holds each pixel's maximum is not tracked,
+      // so use the nearest labelled slice to the centre (centre first, then outwards)
+      const order: number[] = [index]
+      for (let d = 1; d <= mipHalf; d++) order.push(index - d, index + d)
+      const parts = order.filter((k) => k >= 0 && k < geo.count).map((k) => { L.request(k, 0); return L.peek(k) })
+      if (parts.some((x) => !x)) return null
+      const out = new Uint8Array(parts[0]!.length)
+      for (const q of parts) for (let i = 0; i < out.length; i++) if (!out[i] && q![i]) out[i] = q![i]
+      return out
+    }
     if (plane === 'axial') return L.peek(index)
     const vol = L.volumeData
     return vol ? reformat(vol, geo, plane, index) : null
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.labels, plane, index, geo, p.version])
+  }, [p.labels, plane, index, geo, p.version, mipHalf])
 
   // one text anchor per label on this image: the member pixel nearest the label's centroid
   const anchors = useMemo(() => {
@@ -364,12 +388,12 @@ export function Viewport(p: Props) {
     ctx.textBaseline = 'bottom'; halo(Bt, size.w / 2 - 4, size.h - 6, 'rgba(255,255,255,0.85)')
     ctx.font = font(p.compact ? 10 : 12, 500); ctx.textBaseline = 'top'
     const pos = plane === 'axial' ? `z ${geo.z[index].toFixed(1)} mm` : plane === 'coronal' ? `y ${(geo.y0 + index * geo.rowMm).toFixed(1)} mm` : `x ${(geo.x0 + index * geo.colMm).toFixed(1)} mm`
-    halo(`${plane} ${index + 1}/${count} · ${pos}`, 8, 8, 'rgba(255,255,255,0.8)')
+    halo(`${p.examLabel ? p.examLabel + ' · ' : ''}${plane} ${index + 1}/${count} · ${pos}${mipHalf ? ` · MIP ${p.mipMm} mm` : ''}`, 8, 8, 'rgba(255,255,255,0.85)')
     if (!p.compact) {
       halo(`W ${Math.round(p.width)} L ${Math.round(p.center)} · ${zoomPct}%`, 8, 26, 'rgba(255,255,255,0.7)')
       if (!pixels.exact) { ctx.textBaseline = 'bottom'; halo(needsVolume && !p.volumeReady ? 'Full volume not loaded' : 'Decoding slice…', 8, size.h - 8, '#fbbf24') }
     }
-  }, [size, plane, cursor, index, count, geo, dims, scale, offX, offY, dw, dh, p.levels, p.landmarks, p.showLandmarks, p.showLabels, p.showCrosshair, p.highlight, p.accent, p.compact, p.measure, p.center, p.width, zoomPct, pixels.exact, needsVolume, p.volumeReady, anchors, p.seg])
+  }, [size, plane, cursor, index, count, geo, dims, scale, offX, offY, dw, dh, p.levels, p.landmarks, p.showLandmarks, p.showLabels, p.showCrosshair, p.highlight, p.accent, p.compact, p.measure, p.center, p.width, zoomPct, pixels.exact, needsVolume, p.volumeReady, anchors, p.seg, p.examLabel, mipHalf, p.mipMm])
 
   /* -------------------------------------------------------- interaction */
 
